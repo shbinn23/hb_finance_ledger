@@ -1,0 +1,11 @@
+# Local Python smoke/test dependencies.
+#
+# Runtime dependencies are service-scoped:
+# - ETL container: requirements-etl.txt
+# - ML Engine container: ml-engine/requirements.txt
+# - Dashboard container: dashboard/package-lock.json
+-r requirements-etl.txt
+
+pandas==2.3.3
+pydantic==2.12.5
+SQLAlchemy==2.0.48

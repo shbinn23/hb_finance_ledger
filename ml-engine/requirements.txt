@@ -1,0 +1,11 @@
+torch
+chronos-forecasting
+scikit-learn==1.8.0
+fastapi==0.115.0
+uvicorn==0.32.0
+pandas==2.3.3
+numpy==2.0.2
+python-dotenv==1.2.1
+pydantic-settings==2.8.1
+psycopg2-binary==2.9.11
+sqlalchemy==2.0.48

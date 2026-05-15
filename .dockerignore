@@ -1,0 +1,14 @@
+.git
+.idea
+__pycache__
+*.pyc
+.env
+.venv
+venv/
+*.tar.gz
+*.iml
+.DS_Store
+data/
+ml-engine/
+credentials.json
+token.json

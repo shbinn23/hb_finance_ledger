@@ -1,0 +1,15 @@
+.env
+.venv
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.idea/
+*.iml
+*.tar.gz
+data/
+credentials.json
+token.json
+logs/
+*.log

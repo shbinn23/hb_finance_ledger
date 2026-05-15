@@ -1,0 +1,88 @@
+services:
+  db:
+    image: postgres:16-alpine
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-ledger}
+      POSTGRES_USER:     ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-admin}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_whooing_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-ledger}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-3000}:3000"
+    env_file:
+      - path: dashboard/.env.local
+        required: false
+    environment:
+      ML_ENGINE_URL: ${ML_ENGINE_URL:-http://ml-engine:8000}
+      ML_ENGINE_TIMEOUT_MS: ${ML_ENGINE_TIMEOUT_MS:-60000}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-ledger}
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ml-engine:
+    build:
+      context: ./ml-engine
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ML_ENGINE_PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-ledger}
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - ml
+
+  etl:
+    build:
+      context: .
+      dockerfile: Dockerfile.etl
+    platform: linux/amd64
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-ledger}
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - etl
+
+volumes:
+  postgres_data:

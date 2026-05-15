@@ -1,0 +1,29 @@
+### 1. 보안 및 설정 파일 (절대 공유 금지 🔒)
+.env
+credentials.json
+token.json
+
+# config.py는 이제 .env를 읽는 로직만 있으므로 공유해도 안전합니다.
+# 만약 여전히 공유하고 싶지 않다면 아래 주석을 해제하세요.
+# config.py
+
+### 2. 가상환경 및 라이브러리
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+.worktrees/
+
+### 3. 데이터 및 로그
+data/
+artifacts/
+*.xlsx
+*.csv
+*.log
+
+### 4. 운영체제 및 IDE 설정
+.DS_Store
+.idea/
+.vscode/
+*.iml
