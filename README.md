@@ -1,5 +1,22 @@
 # Whooing Finance Dashboard
 
+## Canonical Project
+
+This repository is the canonical version of the personal finance ledger project.
+
+- Local path: `/Users/shbinn/dev/hb_finance_ledger`
+- GitHub: `https://github.com/shbinn23/hb_finance_ledger`
+- Default branch: `main`
+- Runtime stack: Docker Compose project `hb_finance_ledger`
+- Services:
+  - Dashboard: `http://127.0.0.1:3000`
+  - ML Engine: `http://127.0.0.1:8000`
+  - PostgreSQL: `127.0.0.1:5432`
+- Database: `ledger`
+- Schema: `whooing`
+
+Legacy finance repositories and old fortress/whooing migration resources were removed after this repository was promoted. Actual database data is stored in the local Docker volume `hb_finance_ledger_postgres_data` and is not committed to Git.
+
 ## Database Targets
 
 The project uses `ledger` as the PostgreSQL database name and `whooing` as the schema that mirrors the Whooing API structure.
