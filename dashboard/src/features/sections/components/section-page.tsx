@@ -1,13 +1,17 @@
 import { Badge } from "@/components/ui/badge";
+import { PeriodFilter } from "@/components/filters/period-filter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { won, wonCompact } from "@/lib/format";
+import { won } from "@/lib/format";
 import { LedgerWorkbench } from "./ledger-workbench";
 import { CategoryBudgetChart, MonthlyTrendChart, PaymentMixChart } from "./section-charts";
+import { RightInsightPanel } from "./section-side-panel";
 import type { SectionViewModel } from "../types";
 
 interface SectionPageProps {
   model: SectionViewModel;
 }
+
+const periodFilterKeys = new Set(["ledger", "trend", "budget", "analysis", "habits"]);
 
 export function SectionPage({ model }: SectionPageProps) {
   return (
@@ -18,7 +22,12 @@ export function SectionPage({ model }: SectionPageProps) {
           <h1>{model.header.title}</h1>
           <p>{model.header.description}</p>
         </div>
-        <Badge tone="neutral">{model.header.badge}</Badge>
+        <div className="section-hero-actions">
+          {periodFilterKeys.has(model.key) && model.selectedPeriod ? (
+            <PeriodFilter options={model.periodOptions} value={model.selectedPeriod} />
+          ) : null}
+          <Badge tone="neutral">{model.header.badge}</Badge>
+        </div>
       </section>
 
       <div className="metric-grid">
@@ -49,8 +58,7 @@ export function SectionPage({ model }: SectionPageProps) {
         </div>
 
         <aside className="dashboard-side">
-          <InsightPanel model={model} />
-          <PaymentPanel model={model} />
+          <RightInsightPanel model={model} />
         </aside>
       </div>
     </>
@@ -65,11 +73,7 @@ function LedgerPanel({ model }: SectionPageProps) {
         <CardTitle>최근 원장</CardTitle>
       </CardHeader>
       <CardContent>
-        <LedgerWorkbench
-          rows={model.ledger}
-          months={model.ledgerMonths}
-          selectedMonth={model.selectedLedgerMonth}
-        />
+        <LedgerWorkbench rows={model.ledger} />
       </CardContent>
     </Card>
   );
@@ -103,6 +107,7 @@ function TrendPanel({ model }: SectionPageProps) {
 function BudgetPanel({ model }: SectionPageProps) {
   return (
     <>
+      <FixedExpenseSchedulePanel model={model} />
       <Card>
         <CardHeader>
           <CardDescription>Average Baseline</CardDescription>
@@ -114,6 +119,83 @@ function BudgetPanel({ model }: SectionPageProps) {
       </Card>
       <CategoryTable model={model} />
     </>
+  );
+}
+
+function dDayLabel(daysRemaining: number) {
+  if (daysRemaining === 0) return "오늘";
+  if (daysRemaining > 0) return `D-${daysRemaining}`;
+  return `D+${Math.abs(daysRemaining)}`;
+}
+
+function FixedExpenseSchedulePanel({ model }: SectionPageProps) {
+  if (model.selectedPeriod?.mode !== "month") {
+    return (
+      <Card className="transaction-panel">
+        <CardHeader>
+          <CardDescription>Fixed Expenses</CardDescription>
+          <CardTitle>선택 기간 고정지출 합계</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="fixed-overview">
+            <strong>{won(model.fixedExpense.currentAmount)}</strong>
+            <p>
+              {model.selectedPeriod?.label ?? "선택 기간"} steady 계정 지출 합계입니다.
+              월별 처리 예정일은 월 필터에서 확인하세요.
+            </p>
+            <div className="fixed-status-strip">
+              <span>{model.fixedExpense.transactionCount.toLocaleString("ko-KR")}건</span>
+              {model.fixedExpense.topAccounts.map((account) => (
+                <span key={account.name}>{account.name} {won(account.amount)}</span>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="transaction-panel">
+      <CardHeader>
+        <CardDescription>Fixed Schedule</CardDescription>
+        <CardTitle>이번 달 고정지출 처리 현황</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="table-scroll">
+          <table className="data-table fixed-expense-table">
+            <thead>
+              <tr>
+                <th>항목</th>
+                <th>분류</th>
+                <th>결제수단</th>
+                <th className="amount">예상</th>
+                <th className="amount">이번 달</th>
+                <th className="amount">예정일</th>
+                <th>상태</th>
+                <th className="amount">남은 날</th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.fixedExpenseSchedule.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.itemName}</td>
+                  <td>{row.accountName}</td>
+                  <td>{row.paymentAccountName}</td>
+                  <td className="amount">{won(row.expectedAmount)}</td>
+                  <td className="amount">{won(row.currentAmount)}</td>
+                  <td className="amount">{row.dueDay}일</td>
+                  <td>
+                    <span className={`status-pill fixed-status-${row.status}`}>{row.statusLabel}</span>
+                  </td>
+                  <td className="amount">{row.status === "processed" ? "완료" : dDayLabel(row.daysRemaining)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -186,52 +268,6 @@ function HabitsPanel({ model }: SectionPageProps) {
   );
 }
 
-function InsightPanel({ model }: SectionPageProps) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardDescription>Signals</CardDescription>
-        <CardTitle>운영 인사이트</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="side-list">
-          {model.insights.slice(0, 4).map((insight) => (
-            <article key={insight.title} className="side-item">
-              <Badge tone={insight.tone}>{insight.tone}</Badge>
-              <strong>{insight.title}</strong>
-              <p>{insight.body}</p>
-            </article>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function PaymentPanel({ model }: SectionPageProps) {
-  return (
-    <Card className="panel-dark">
-      <CardHeader>
-        <CardDescription className="eyebrow on-dark">Payment Mix</CardDescription>
-        <CardTitle>이번 달 결제수단</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="dark-list">
-          {model.paymentMix.slice(0, 6).map((row) => (
-            <article key={row.name}>
-              <div>
-                <strong>{row.name}</strong>
-                <p>{row.category} · {row.count}건</p>
-              </div>
-              <b>{wonCompact(row.amount)}</b>
-            </article>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function SimpleMonthlyTable({ model }: SectionPageProps) {
   return (
     <div className="table-scroll">
@@ -247,7 +283,7 @@ function SimpleMonthlyTable({ model }: SectionPageProps) {
         <tbody>
           {model.monthlyTrend.map((row) => (
             <tr key={row.ym}>
-              <td>{row.ym}</td>
+              <td>{row.label}</td>
               <td className="amount">{won(row.income)}</td>
               <td className="amount">{won(row.expenses)}</td>
               <td className="amount">{won(row.cardPayment)}</td>

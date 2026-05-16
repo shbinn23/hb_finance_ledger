@@ -2,6 +2,7 @@ import { Shell } from "@/components/layout/shell";
 import { MetricCard } from "@/components/metrics/metric-card";
 import { AccountStack } from "@/features/overview/components/account-stack";
 import { CategoryBoard } from "@/features/overview/components/category-board";
+import { FixedExpenseCard } from "@/features/overview/components/fixed-expense-card";
 import { HeroSummary } from "@/features/overview/components/hero-summary";
 import { InsightRail } from "@/features/overview/components/insight-rail";
 import { SpendingChart } from "@/features/overview/components/spending-chart";
@@ -37,6 +38,7 @@ export default async function OverviewPage() {
           <TransactionTable rows={model.transactions} />
         </div>
         <aside className="dashboard-side">
+          <FixedExpenseCard fixedExpense={model.fixedExpense} />
           <CategoryBoard categories={model.categories} />
           <AccountStack accounts={model.accounts} />
         </aside>

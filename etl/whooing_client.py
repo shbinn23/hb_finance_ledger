@@ -65,6 +65,13 @@ class WhooingClient:
     def get_accounts(self) -> dict[str, Any]:
         return self.request("GET", "accounts.json", params={"section_id": self.section_id})
 
+    def sort_accounts(self, account: str, account_ids: list[str]) -> dict[str, Any]:
+        data = {
+            "section_id": self.section_id,
+            "account_ids": ",".join(account_ids),
+        }
+        return self.request("PUT", f"accounts/{account}/sort.json", data=data)
+
     def get_entries(self, start_date: str, end_date: str, limit_total: Optional[int] = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         max_cursor = None

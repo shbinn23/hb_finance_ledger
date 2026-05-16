@@ -11,6 +11,7 @@ export interface SummaryMetric {
 export interface SpendingPoint {
   day: number;
   actual: number | null;
+  actualProjection: number | null;
   projected: number | null;
   baseline: number | null;
   ai?: number | null;
@@ -48,6 +49,14 @@ export interface InsightItem {
   tone: RiskLevel;
 }
 
+export interface FixedExpenseOverview {
+  processedCount: number;
+  scheduledCount: number;
+  overdueCount: number;
+  nextLabel: string;
+  nextDetail: string;
+}
+
 export interface OverviewViewModel {
   asOf: string;
   monthLabel: string;
@@ -62,4 +71,5 @@ export interface OverviewViewModel {
   accounts: AccountBalance[];
   transactions: TransactionRow[];
   insights: InsightItem[];
+  fixedExpense: FixedExpenseOverview;
 }

@@ -28,6 +28,7 @@ export function SpendingChart({ data }: SpendingChartProps) {
         </div>
         <div className="legend">
           <span><i className="legend-actual" /> 현재</span>
+          <span><i className="legend-actual-projection" /> 실지출 예상</span>
           <span><i className="legend-projected" /> ML 예상</span>
           <span><i className="legend-baseline" /> 최근 기준</span>
         </div>
@@ -77,6 +78,15 @@ export function SpendingChart({ data }: SpendingChartProps) {
             dataKey="projected"
             name="ML 예상"
             stroke="var(--primary)"
+            strokeDasharray="4 4"
+            strokeWidth={2.4}
+            dot={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="actualProjection"
+            name="실지출 예상"
+            stroke="var(--ruby)"
             strokeDasharray="4 4"
             strokeWidth={2.4}
             dot={false}

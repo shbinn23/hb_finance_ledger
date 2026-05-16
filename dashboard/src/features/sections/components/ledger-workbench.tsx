@@ -5,7 +5,7 @@ import { parseAsString, useQueryState } from "nuqs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { won } from "@/lib/format";
-import type { EntryKind, LedgerAnalyticsRow, LedgerMonthOption } from "@/server/whooing/analytics-repository";
+import type { EntryKind, LedgerAnalyticsRow } from "@/server/whooing/analytics-repository";
 import { entryKindLabels } from "../types";
 
 const filters: Array<{ value: "all" | EntryKind; label: string }> = [
@@ -18,13 +18,10 @@ const filters: Array<{ value: "all" | EntryKind; label: string }> = [
 
 interface LedgerWorkbenchProps {
   rows: LedgerAnalyticsRow[];
-  months: LedgerMonthOption[];
-  selectedMonth: string | null;
 }
 
-export function LedgerWorkbench({ rows, months, selectedMonth }: LedgerWorkbenchProps) {
+export function LedgerWorkbench({ rows }: LedgerWorkbenchProps) {
   const [type, setType] = useQueryState("type", parseAsString.withDefault("all"));
-  const [, setMonth] = useQueryState("month", parseAsString.withOptions({ shallow: false }));
   const visibleRows = useMemo(
     () => rows.filter((row) => type === "all" || row.kind === type),
     [rows, type],
@@ -46,22 +43,6 @@ export function LedgerWorkbench({ rows, months, selectedMonth }: LedgerWorkbench
             </Button>
           ))}
         </div>
-
-        <label className="ledger-month-select">
-          <span>월</span>
-          <select
-            value={selectedMonth ?? ""}
-            disabled={months.length === 0}
-            onChange={(event) => setMonth(event.target.value || null)}
-          >
-            {months.length === 0 ? <option value="">거래 없음</option> : null}
-            {months.map((month) => (
-              <option key={month.value} value={month.value}>
-                {month.label}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
       <div className="table-scroll">

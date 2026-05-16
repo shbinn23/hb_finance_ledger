@@ -52,6 +52,22 @@ Runtime dependencies are intentionally split by service.
 
 `requirements-dashboard.txt` is not part of the canonical runtime. The dashboard is a Node/Next.js app and is built from `dashboard/package-lock.json`.
 
+## ML Runtime URLs
+
+When the Dashboard runs inside Docker Compose, it must call the ML Engine through the Compose service name:
+
+```text
+ML_ENGINE_URL=http://ml-engine:8000
+```
+
+This value is set directly in `docker-compose.yml` for the dashboard service. Do not let a host-only `.env` value such as `http://127.0.0.1:8000` or `http://localhost:8000` override the Dashboard container, because inside the container that points back to the Dashboard container and the `/ml` page will fall back to local linear projection.
+
+When running the Dashboard directly on the host, start `ml-engine` with compose and set:
+
+```bash
+ML_ENGINE_URL=http://127.0.0.1:8000
+```
+
 ## Slack Expense Flow Runtime
 
 Slack `/expense` entry submission uses the Dashboard plus the ETL HTTP service. The ETL service exposes `POST /sync/whooing` for best-effort local DB sync after a Whooing entry is created.

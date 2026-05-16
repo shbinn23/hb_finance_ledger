@@ -1,11 +1,11 @@
 import { Shell } from "@/components/layout/shell";
-import { SectionPage } from "@/features/sections/components/section-page";
-import { getSectionViewModel } from "@/features/sections/service";
+import { AccountingPage } from "@/features/accounting/components/accounting-page";
+import { getAccountingViewModel } from "@/features/accounting/service";
 import { parsePeriodQuery } from "@/lib/period-filter";
 
 export const dynamic = "force-dynamic";
 
-interface BudgetPageProps {
+interface AccountingPageProps {
   searchParams?: Promise<{
     period?: string | string[];
     year?: string | string[];
@@ -14,14 +14,15 @@ interface BudgetPageProps {
   }>;
 }
 
-export default async function BudgetPage({ searchParams }: BudgetPageProps) {
+export default async function Page({ searchParams }: AccountingPageProps) {
   const params = await searchParams;
-  const model = await getSectionViewModel("budget", {
+  const model = await getAccountingViewModel({
     periodQuery: parsePeriodQuery(params),
   });
+
   return (
     <Shell>
-      <SectionPage model={model} />
+      <AccountingPage model={model} />
     </Shell>
   );
 }

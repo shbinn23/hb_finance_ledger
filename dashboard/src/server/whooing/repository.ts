@@ -1,4 +1,5 @@
 import { query } from "@/lib/db/postgres";
+import { formatDisplayDateTime } from "@/lib/format";
 import type { AccountBalance, TransactionRow } from "@/features/overview/types";
 import type { OverviewSource } from "@/features/overview/model";
 
@@ -20,6 +21,11 @@ interface DailyRow {
 
 interface CategoryRow {
   name: string;
+  amount: string;
+}
+
+interface ExpenseCategoryRow {
+  category: string;
   amount: string;
 }
 
@@ -77,13 +83,7 @@ async function getSyncState() {
     entryCount: Number(row?.entry_count ?? 0),
     ...month,
     asOf: row?.synced_at
-      ? new Intl.DateTimeFormat("ko-KR", {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        }).format(row.synced_at)
+      ? formatDisplayDateTime(row.synced_at)
       : "동기화 전",
   };
 }
@@ -207,6 +207,33 @@ async function getCategories() {
   return result.rows.map((row) => ({ name: row.name, amount: numberValue(row.amount) }));
 }
 
+async function getCurrentExpenseByCategory() {
+  const result = await query<ExpenseCategoryRow>(
+    `
+    with latest_month as (
+      select (floor(max(entry_date))::int / 100) as ym
+      from whooing.entries
+      where section_id = $1
+    )
+    select coalesce(a.category, 'normal') as category,
+           sum(e.money)::text as amount
+    from whooing.entries e
+    join whooing.accounts a
+      on a.section_id = e.section_id
+     and a.account_id = e.l_account_id
+     and a.account_type = e.l_account
+    join latest_month m on true
+    where e.section_id = $1
+      and e.l_account = 'expenses'
+      and a.item_type = 'account'
+      and (floor(e.entry_date)::int / 100) = m.ym
+    group by coalesce(a.category, 'normal')
+    `,
+    [sectionId],
+  );
+  return result.rows.map((row) => ({ category: row.category, amount: numberValue(row.amount) }));
+}
+
 async function getKeyAccounts(): Promise<AccountBalance[]> {
   const result = await query<AccountRow>(
     `
@@ -259,7 +286,7 @@ async function getRecentTransactions(): Promise<TransactionRow[]> {
   const result = await query<TransactionDbRow>(
     `
     select e.entry_id::text as id,
-           to_char(to_date(floor(e.entry_date)::int::text, 'YYYYMMDD'), 'MM.DD') as date_label,
+           to_char(to_date(floor(e.entry_date)::int::text, 'YYYYMMDD'), 'YYYY.MM.DD') as date_label,
            coalesce(pay.title, e.r_account_id) as account,
            coalesce(exp.title, e.l_account_id) as category,
            e.item as merchant,
@@ -296,6 +323,7 @@ export async function getWhooingOverviewSource(): Promise<OverviewSource> {
     dailyExpenses,
     baseline,
     categories,
+    currentExpenseByCategory,
     accounts,
     transactions,
   ] = await Promise.all([
@@ -304,6 +332,7 @@ export async function getWhooingOverviewSource(): Promise<OverviewSource> {
     getDailyExpenses(),
     getBaselineExpenses(),
     getCategories(),
+    getCurrentExpenseByCategory(),
     getKeyAccounts(),
     getRecentTransactions(),
   ]);
@@ -318,6 +347,7 @@ export async function getWhooingOverviewSource(): Promise<OverviewSource> {
     dailyExpenses,
     baseline,
     categories,
+    currentExpenseByCategory,
     accounts,
     transactions,
   };

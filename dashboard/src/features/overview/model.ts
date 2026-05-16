@@ -1,13 +1,15 @@
-import { won, wonCompact } from "@/lib/format";
+import { won } from "@/lib/format";
 import type {
   AccountBalance,
   CategorySlice,
+  FixedExpenseOverview,
   OverviewViewModel,
   SpendingPoint,
   SummaryMetric,
   TransactionRow,
 } from "./types";
 import type { MlForecastResult } from "@/server/ml/client";
+import type { FixedExpenseScheduleRow } from "@/lib/fixed-expense-schedule";
 
 export interface OverviewSource {
   asOf: string;
@@ -19,6 +21,7 @@ export interface OverviewSource {
   dailyExpenses: Array<{ day: number; amount: number }>;
   baseline: Array<{ day: number; amount: number }>;
   categories: Array<{ name: string; amount: number }>;
+  currentExpenseByCategory: Array<{ category: string; amount: number }>;
   accounts: AccountBalance[];
   transactions: TransactionRow[];
 }
@@ -30,6 +33,8 @@ const categoryTones = [
   "var(--green)",
   "var(--ink-muted)",
 ];
+const monthlyIncome = 3_110_000;
+const monthlySavingTarget = 1_000_000;
 
 function cumulative(points: Array<{ day: number; amount: number }>) {
   let total = 0;
@@ -58,9 +63,16 @@ function buildSpending(
 
   if (mlForecast) {
     const actualByDay = new Map(actual.map((point) => [point.day, point.amount]));
+    const mlByDay = new Map(mlForecast.series.map((point) => [point.day, point.projected]));
+    const actualToday = last?.amount ?? null;
+    const mlToday = lastDay > 0 ? mlByDay.get(lastDay) ?? null : null;
+
     return mlForecast.series.map((point) => ({
       day: point.day,
       actual: actualByDay.get(point.day) ?? null,
+      actualProjection: actualToday !== null && mlToday !== null && point.projected !== null && point.day >= lastDay
+        ? Math.round(actualToday + (point.projected - mlToday))
+        : null,
       projected: point.projected,
       baseline: baselineByDay.get(point.day) ?? null,
       ai: point.ai,
@@ -78,6 +90,7 @@ function buildSpending(
     projected.push({
       day,
       actual: day <= lastDay ? actual.find((point) => point.day === day)?.amount ?? null : null,
+      actualProjection: null,
       projected: amount,
       baseline: baselineByDay.get(day) ?? null,
       upper: Math.round(amount * 1.07),
@@ -90,6 +103,7 @@ function buildSpending(
     byDay.set(point.day, {
       day: point.day,
       actual: point.amount,
+      actualProjection: null,
       projected: null,
       baseline: baselineByDay.get(point.day) ?? null,
       upper: null,
@@ -112,11 +126,37 @@ function buildCategories(categories: OverviewSource["categories"]): CategorySlic
   }));
 }
 
-function buildSummary(source: OverviewSource, mlForecast?: MlForecastResult | null): SummaryMetric[] {
+function actualProjectionFinal(spending: SpendingPoint[]) {
+  return spending.findLast((point) => point.actualProjection !== null)?.actualProjection ?? null;
+}
+
+function calculateReservedFixedTotal(schedule: FixedExpenseScheduleRow[]) {
+  return schedule.reduce((sum, row) => (
+    sum + (row.currentAmount > 0 ? row.currentAmount : row.expectedAmount)
+  ), 0);
+}
+
+function calculateCurrentVariableSpend(currentExpenseByCategory: OverviewSource["currentExpenseByCategory"]) {
+  return currentExpenseByCategory
+    .filter((row) => row.category === "floating" || row.category === "normal")
+    .reduce((sum, row) => sum + row.amount, 0);
+}
+
+function buildSummary(
+  source: OverviewSource,
+  spending: SpendingPoint[],
+  fixedExpenseSchedule: FixedExpenseScheduleRow[],
+  mlForecast?: MlForecastResult | null,
+): SummaryMetric[] {
   const netWorth = source.assetTotal - source.liabilityTotal;
   const currentSpend = source.dailyExpenses.reduce((sum, point) => sum + point.amount, 0);
   const lastDay = Math.max(1, ...source.dailyExpenses.map((point) => point.day));
-  const expectedFinal = mlForecast?.projectedFinal ?? projectMonthEnd(currentSpend, lastDay);
+  const fallbackMonthTotal = mlForecast?.projectedFinal ?? projectMonthEnd(currentSpend, lastDay);
+  const projectedActualMonthTotal = actualProjectionFinal(spending) ?? fallbackMonthTotal;
+  const reservedFixedTotal = calculateReservedFixedTotal(fixedExpenseSchedule);
+  const variableSpendPool = monthlyIncome - monthlySavingTarget - reservedFixedTotal;
+  const currentVariableSpend = calculateCurrentVariableSpend(source.currentExpenseByCategory);
+  const availableResource = variableSpendPool - currentVariableSpend;
 
   return [
     {
@@ -136,9 +176,18 @@ function buildSummary(source: OverviewSource, mlForecast?: MlForecastResult | nu
     {
       id: "forecast",
       label: "월말 예상",
-      value: wonCompact(expectedFinal),
-      detail: mlForecast ? `ML 기준 ${wonCompact(expectedFinal)} 예상` : `현재 속도 기준 ${wonCompact(expectedFinal)} 예상`,
-      tone: expectedFinal > 2_600_000 ? "watch" : "stable",
+      value: won(projectedActualMonthTotal),
+      detail: mlForecast ? `ML 예상 ${won(mlForecast.projectedFinal)}` : `현재 속도 기준 ${won(fallbackMonthTotal)} 예상`,
+      tone: projectedActualMonthTotal > 2_600_000 ? "watch" : "stable",
+    },
+    {
+      id: "available-resource",
+      label: "가용 리소스",
+      value: won(availableResource),
+      detail: availableResource >= 0
+        ? `월말까지 변동지출 여유 ${won(availableResource)}`
+        : `변동지출 리소스 ${won(Math.abs(availableResource))} 초과`,
+      tone: availableResource < 0 ? "over" : "stable",
     },
     {
       id: "sync",
@@ -150,8 +199,34 @@ function buildSummary(source: OverviewSource, mlForecast?: MlForecastResult | nu
   ];
 }
 
-export function buildOverviewViewModel(source: OverviewSource, mlForecast?: MlForecastResult | null): OverviewViewModel {
+function dDayLabel(daysRemaining: number) {
+  if (daysRemaining === 0) return "오늘";
+  if (daysRemaining > 0) return `D-${daysRemaining}`;
+  return `D+${Math.abs(daysRemaining)}`;
+}
+
+function buildFixedExpenseOverview(schedule: FixedExpenseScheduleRow[]): FixedExpenseOverview {
+  const processedCount = schedule.filter((row) => row.status === "processed").length;
+  const scheduledCount = schedule.filter((row) => row.status === "scheduled").length;
+  const overdueCount = schedule.filter((row) => row.status === "overdue").length;
+  const next = schedule.find((row) => row.status !== "processed");
+
+  return {
+    processedCount,
+    scheduledCount,
+    overdueCount,
+    nextLabel: next ? `${next.itemName} ${dDayLabel(next.daysRemaining)}` : "모두 처리완료",
+    nextDetail: next ? `${next.accountName} · ${next.statusLabel}` : `${processedCount}개 항목 완료`,
+  };
+}
+
+export function buildOverviewViewModel(
+  source: OverviewSource,
+  mlForecast?: MlForecastResult | null,
+  fixedExpenseSchedule: FixedExpenseScheduleRow[] = [],
+): OverviewViewModel {
   const netWorth = source.assetTotal - source.liabilityTotal;
+  const spending = buildSpending(source.dailyExpenses, source.baseline, mlForecast);
 
   return {
     asOf: source.asOf,
@@ -161,11 +236,12 @@ export function buildOverviewViewModel(source: OverviewSource, mlForecast?: MlFo
     liabilityTotal: source.liabilityTotal,
     syncState: "후잉 본계정 기준",
     forecastSource: mlForecast ? "ml" : "fallback",
-    summary: buildSummary(source, mlForecast),
-    spending: buildSpending(source.dailyExpenses, source.baseline, mlForecast),
+    summary: buildSummary(source, spending, fixedExpenseSchedule, mlForecast),
+    spending,
     categories: buildCategories(source.categories),
     accounts: source.accounts,
     transactions: source.transactions,
+    fixedExpense: buildFixedExpenseOverview(fixedExpenseSchedule),
     insights: [
       {
         title: "후잉 동기화 기준 정상",

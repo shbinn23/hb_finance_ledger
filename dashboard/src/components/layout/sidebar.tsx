@@ -9,6 +9,7 @@ import {
   CreditCard,
   LayoutDashboard,
   PieChart,
+  Scale,
   TrendingUp,
 } from "lucide-react";
 
@@ -18,6 +19,7 @@ const tabs = [
   { id: "trend", label: "지출 추이", Icon: TrendingUp },
   { id: "budget", label: "예산 관리", Icon: PieChart },
   { id: "assets", label: "자산·카드", Icon: CreditCard },
+  { id: "accounting", label: "장부 분석", Icon: Scale },
   { id: "analysis", label: "AI 분석", Icon: Brain },
   { id: "ml", label: "ML 인사이트", Icon: BrainCircuit },
   { id: "habits", label: "습관 관리", Icon: Activity },

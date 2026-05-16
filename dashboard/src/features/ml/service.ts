@@ -1,4 +1,4 @@
-import { won, wonCompact } from "@/lib/format";
+import { formatDisplayDate, won, wonCompact } from "@/lib/format";
 import { getWhooingOverviewSource } from "@/server/whooing/repository";
 import { getWhooingAnomalyTaskRows, getWhooingForecastTaskSource } from "@/server/whooing/ml-task-repository";
 import { fetchMlAnomalies, fetchMlForecast, isMlEngineEnabled, type MlForecastResult } from "@/server/ml/client";
@@ -25,6 +25,12 @@ function linearProjectedFinal(currentSpend: number, lastDay: number, monthDays =
 function toneFromProjection(projectedFinal: number): "stable" | "watch" | "over" {
   if (projectedFinal >= monthlyLimit * 1.08) return "over";
   if (projectedFinal >= monthlyLimit) return "watch";
+  return "stable";
+}
+
+function toneFromConfidence(errorRate: number): "stable" | "watch" | "over" {
+  if (errorRate >= 20) return "over";
+  if (errorRate >= 10) return "watch";
   return "stable";
 }
 
@@ -86,6 +92,7 @@ function buildMetrics(
   currentSpend: number,
   anomalyCount: number,
   source: "ml" | "fallback",
+  forecastConfidence: MlMetric | null,
 ): MlMetric[] {
   const remainingBudget = monthlyLimit - currentSpend;
   const remainingDays = Math.max(0, 31 - new Date().getDate());
@@ -117,7 +124,31 @@ function buildMetrics(
       detail: "남은 기간 평균",
       tone: safeDaily < 30_000 ? "watch" : "stable",
     },
+    forecastConfidence ?? {
+      label: "예측 신뢰도",
+      value: "-",
+      detail: source === "ml" ? "실제 누적과 ML 예상 오차 계산 대기" : "ML 예상 없음",
+      tone: "stable",
+    },
   ];
+}
+
+function buildForecastConfidence(points: MlForecastPoint[]): MlMetric | null {
+  const point = points.findLast((row) => row.actual !== null && row.projected !== null);
+  if (!point || point.projected === null || point.projected <= 0 || point.actual === null) return null;
+
+  const actual = point.actual;
+  const projected = point.projected;
+  const errorAmount = actual - projected;
+  const errorRate = Math.round((Math.abs(errorAmount) / projected) * 100);
+  const confidence = Math.max(0, 100 - errorRate);
+
+  return {
+    label: "예측 신뢰도",
+    value: `${confidence}%`,
+    detail: `실제 누적과 ML 예상 오차 ${errorRate}%`,
+    tone: toneFromConfidence(errorRate),
+  };
 }
 
 export async function getMlForecastForOverview(): Promise<MlForecastResult | null> {
@@ -142,8 +173,9 @@ export async function getMlInsightsViewModel(): Promise<MlInsightsViewModel> {
 
   const merged = mergeForecast(source.dailyExpenses, forecast);
   const currentSpend = cumulative(source.dailyExpenses).at(-1)?.amount ?? 0;
+  const forecastConfidence = merged.source === "ml" ? buildForecastConfidence(merged.points) : null;
   const anomalyRows: MlAnomalyRow[] = anomalies.slice(0, 14).map((row) => ({
-    date: row.date,
+    date: formatDisplayDate(row.date),
     description: row.description,
     category: row.category,
     amount: won(row.amount),
@@ -173,7 +205,7 @@ export async function getMlInsightsViewModel(): Promise<MlInsightsViewModel> {
           : "퍼블리싱 안정성을 위해 무거운 Chronos 자동 실행을 잠시 꺼두고, 현재 누적 지출의 일평균으로 월말 예상치를 표시합니다.",
       tone,
     },
-    metrics: buildMetrics(merged.projectedFinal, currentSpend, flaggedCount, merged.source),
+    metrics: buildMetrics(merged.projectedFinal, currentSpend, flaggedCount, merged.source, forecastConfidence),
     forecast: merged.points,
     anomalies: anomalyRows,
     status: [
@@ -187,7 +219,7 @@ export async function getMlInsightsViewModel(): Promise<MlInsightsViewModel> {
         detail: forecastRange,
       },
       { label: "Forecast cache", value: forecast?.cacheHit ? "hit" : forecast ? "miss" : "fallback", detail: forecast?.inputHash ? forecast.inputHash.slice(0, 12) : "no model payload" },
-      { label: "Prediction date", value: forecastTask.today, detail: source.asOf },
+      { label: "Prediction date", value: formatDisplayDate(forecastTask.today), detail: source.asOf },
     ],
   };
 }
