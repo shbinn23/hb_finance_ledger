@@ -81,7 +81,7 @@ def sync(
     end_date: Optional[str] = None,
     limit_total: Optional[int] = None,
     sleep_seconds: float = 3.0,
-) -> None:
+) -> dict:
     start_str, end_str = _date_range(days, start_date, end_date)
 
     print(f"동기화 범위: {start_str} ~ {end_str}")
@@ -146,6 +146,14 @@ def sync(
 
     print(f"upsert: {upserted}건 / 삭제: {deleted}건")
     print("✅ 동기화 완료")
+
+    return {
+        "start_date": start_str,
+        "end_date": end_str,
+        "fetched": len(entries),
+        "upserted": upserted,
+        "deleted": deleted,
+    }
 
 
 if __name__ == "__main__":

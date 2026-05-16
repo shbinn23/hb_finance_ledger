@@ -32,6 +32,13 @@ services:
     environment:
       ML_ENGINE_URL: ${ML_ENGINE_URL:-http://ml-engine:8000}
       ML_ENGINE_TIMEOUT_MS: ${ML_ENGINE_TIMEOUT_MS:-60000}
+      ETL_SERVICE_URL: ${ETL_SERVICE_URL:-http://etl-service:8080}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      WHOOING_APP_ID: ${WHOOING_APP_ID:-}
+      WHOOING_TOKEN: ${WHOOING_TOKEN:-}
+      WHOOING_SIGNATURE: ${WHOOING_SIGNATURE:-}
+      WHOOING_SECTION_ID: ${WHOOING_SECTION_ID:-}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-ledger}
@@ -69,6 +76,29 @@ services:
       context: .
       dockerfile: Dockerfile.etl
     platform: linux/amd64
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-ledger}
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - etl
+
+  etl-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.etl
+    platform: linux/amd64
+    command: uvicorn etl.service:app --host 0.0.0.0 --port 8080
+    ports:
+      - "127.0.0.1:${ETL_SERVICE_PORT:-8080}:8080"
     env_file:
       - path: .env
         required: false
