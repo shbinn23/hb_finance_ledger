@@ -1,7 +1,7 @@
 import { query } from "@/lib/db/postgres";
 import { getAccountDisplayName } from "@/lib/account-display-name";
 
-export type WhooingLedgerAccountType = "assets" | "liabilities" | "expenses";
+export type WhooingLedgerAccountType = "assets" | "liabilities" | "capital" | "expenses" | "income";
 
 export interface WhooingLedgerAccount {
   accountType: WhooingLedgerAccountType;
@@ -45,7 +45,7 @@ function toGroupedExpenseAccounts(rows: AccountDbRow[]): WhooingLedgerAccount[] 
 }
 
 export async function getSlackLedgerEntryAccounts() {
-  const [expenseCategories, paymentAccounts] = await Promise.all([
+  const [expenseCategories, assetAccounts, liabilityAccounts, incomeCategories, capitalAccounts] = await Promise.all([
     query<AccountDbRow>(
       `
       select account_type, account_id, item_type, title, sort_order
@@ -62,15 +62,56 @@ export async function getSlackLedgerEntryAccounts() {
       from whooing.accounts
       where section_id = $1
         and item_type = 'account'
-        and account_type in ('assets', 'liabilities')
-      order by account_type, sort_order nulls last, title
+        and account_type = 'assets'
+      order by sort_order nulls last, title
+      `,
+      [sectionId],
+    ),
+    query<AccountDbRow>(
+      `
+      select account_type, account_id, item_type, title, sort_order
+      from whooing.accounts
+      where section_id = $1
+        and item_type = 'account'
+        and account_type = 'liabilities'
+      order by sort_order nulls last, title
+      `,
+      [sectionId],
+    ),
+    query<AccountDbRow>(
+      `
+      select account_type, account_id, item_type, title, sort_order
+      from whooing.accounts
+      where section_id = $1
+        and item_type = 'account'
+        and account_type = 'income'
+      order by sort_order nulls last, title
+      `,
+      [sectionId],
+    ),
+    query<AccountDbRow>(
+      `
+      select account_type, account_id, item_type, title, sort_order
+      from whooing.accounts
+      where section_id = $1
+        and item_type = 'account'
+        and account_type = 'capital'
+      order by sort_order nulls last, title
       `,
       [sectionId],
     ),
   ]);
 
+  const assetOptions = assetAccounts.rows.map(toAccount);
+  const liabilityOptions = liabilityAccounts.rows.map(toAccount);
+
   return {
     expenseCategories: toGroupedExpenseAccounts(expenseCategories.rows),
-    paymentAccounts: paymentAccounts.rows.map(toAccount),
+    paymentAccounts: [...assetOptions, ...liabilityOptions],
+    incomeCategories: incomeCategories.rows.map(toAccount),
+    depositAccounts: [...assetOptions, ...liabilityOptions],
+    assetAccounts: assetOptions,
+    liabilityAccounts: liabilityOptions,
+    capitalAccounts: capitalAccounts.rows.map(toAccount),
   };
 }
