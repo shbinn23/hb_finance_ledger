@@ -64,6 +64,24 @@ test("calculateCardPerformanceEstimate uses performance amount and excludes lega
   assert.equal(estimate.dataQuality, "structured");
 });
 
+test("statement and performance helpers keep the combined card summary axes separate", () => {
+  const base = {
+    structuredApprovalTotal: 10_000,
+    structuredPostingTotal: 9_000,
+    structuredDiscountTotal: 1_000,
+    legacyPostingTotal: 20_000,
+  };
+  const statement = calculateCardStatementEstimate(base);
+  const performance = calculateCardPerformanceEstimate({
+    ...base,
+    structuredPerformanceTotal: 10_000,
+  });
+
+  assert.equal(statement.statementEstimate, 29_000);
+  assert.equal(performance.performanceEstimate, 10_000);
+  assert.equal(performance.excludedLegacyPostingTotal, 20_000);
+});
+
 test("calculateCardPerformanceEstimate returns no_data without structured performance", () => {
   const estimate = calculateCardPerformanceEstimate({
     structuredPerformanceTotal: 0,

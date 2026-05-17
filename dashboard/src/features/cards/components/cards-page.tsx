@@ -1,6 +1,5 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { calculateCardPerformanceEstimate } from "@/lib/card-benefits/assets-summary";
 import { won } from "@/lib/format";
 import { RightInsightPanel } from "@/features/sections/components/section-side-panel";
 import type { CardsDataQualityTone, CardsViewModel } from "../types";
@@ -9,19 +8,10 @@ interface CardsPageProps {
   model: CardsViewModel;
 }
 
-function percentText(value: number) {
-  return `${value.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}%`;
-}
-
 function dataQuality(value: string): CardsDataQualityTone {
   if (value === "structured") return { label: "구조화", tone: "stable" };
   if (value === "partial_estimate") return { label: "일부 추정", tone: "watch" };
   if (value === "legacy_estimate") return { label: "legacy 추정", tone: "neutral" };
-  return { label: "데이터 없음", tone: "neutral" };
-}
-
-function performanceQuality(value: string): CardsDataQualityTone {
-  if (value === "structured") return { label: "구조화", tone: "stable" };
   return { label: "데이터 없음", tone: "neutral" };
 }
 
@@ -84,10 +74,8 @@ export function CardsPage({ model }: CardsPageProps) {
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
-          <CardBenefitSection model={model} />
+          <CardSummarySection model={model} />
           <CardCapStatusSection model={model} />
-          <CardPerformanceSection model={model} />
-          <CardStatementSection model={model} />
           <RecentBenefitEventsSection model={model} />
         </div>
 
@@ -99,45 +87,22 @@ export function CardsPage({ model }: CardsPageProps) {
   );
 }
 
-function CardBenefitSection({ model }: CardsPageProps) {
+function CardSummarySection({ model }: CardsPageProps) {
   const { summary } = model;
 
   return (
     <Card className="transaction-panel">
       <CardHeader>
-        <CardDescription>Card Benefit Beta</CardDescription>
+        <CardDescription>Card Summary</CardDescription>
         <div className="metric-card-top">
-          <CardTitle>카드혜택 Beta</CardTitle>
+          <CardTitle>카드별 요약</CardTitle>
           <Badge tone="neutral">Beta</Badge>
         </div>
       </CardHeader>
       <CardContent>
         <p className="metric-detail">
-          {summary.monthLabel} 구조화 카드혜택 이벤트 기준입니다. 승인금액은 실적 기준, 매입금액은 명세서·후잉 원장 기준입니다.
+          {summary.monthLabel} 기준으로 실적, 명세서·매입금액, 혜택 적용액을 카드별로 함께 비교합니다.
         </p>
-
-        <div className="analysis-grid">
-          <article className="analysis-card analysis-stable">
-            <Badge tone="stable">approval</Badge>
-            <strong>승인금액</strong>
-            <p>{won(summary.approvalTotal)} · 카드 승인 원금</p>
-          </article>
-          <article className="analysis-card analysis-stable">
-            <Badge tone="stable">discount</Badge>
-            <strong>적용 할인</strong>
-            <p>{won(summary.discountTotal)} · 절감률 {percentText(summary.effectiveSavingRate)}</p>
-          </article>
-          <article className="analysis-card analysis-neutral">
-            <Badge tone="neutral">posting</Badge>
-            <strong>매입금액</strong>
-            <p>{won(summary.postingTotal)} · 명세서·후잉 기준</p>
-          </article>
-          <article className="analysis-card analysis-watch">
-            <Badge tone="watch">events</Badge>
-            <strong>혜택 거래</strong>
-            <p>{summary.eventCount.toLocaleString("ko-KR")}건 · 구조화 입력 기준</p>
-          </article>
-        </div>
 
         <div className="table-scroll">
           <table className="data-table">
@@ -146,29 +111,32 @@ function CardBenefitSection({ model }: CardsPageProps) {
                 <th>카드</th>
                 <th className="amount">승인금액</th>
                 <th className="amount">실적금액</th>
-                <th className="amount">적용 할인</th>
                 <th className="amount">매입금액</th>
+                <th className="amount">적용 할인</th>
                 <th className="amount">구조화 거래</th>
+                <th>데이터 품질</th>
               </tr>
             </thead>
             <tbody>
-              {summary.statementEstimates.some((row) => row.structuredCount > 0) ? (
-                summary.statementEstimates
-                  .filter((row) => row.structuredCount > 0)
-                  .map((row) => (
+              {summary.statementEstimates.length > 0 ? (
+                summary.statementEstimates.map((row) => {
+                  const quality = dataQuality(row.dataQuality);
+                  return (
                     <tr key={`${row.cardAccountType}:${row.cardAccountId}`}>
                       <td>{row.cardName}</td>
                       <td className="amount">{won(row.structuredApprovalTotal)}</td>
                       <td className="amount">{won(row.structuredPerformanceTotal)}</td>
+                      <td className="amount">{won(row.statementEstimate)}</td>
                       <td className="amount">{won(row.structuredDiscountTotal)}</td>
-                      <td className="amount">{won(row.structuredPostingTotal)}</td>
                       <td className="amount">{row.structuredCount.toLocaleString("ko-KR")}건</td>
+                      <td><Badge tone={quality.tone}>{quality.label}</Badge></td>
                     </tr>
-                  ))
+                  );
+                })
               ) : (
                 <tr>
-                  <td colSpan={6} className="empty-cell">
-                    아직 구조화된 카드혜택 거래가 없습니다. Slack 지출 입력에서 카드혜택을 선택하면 이곳에 집계됩니다.
+                  <td colSpan={7} className="empty-cell">
+                    카드별 요약에 사용할 카드 지출 데이터가 아직 없습니다.
                   </td>
                 </tr>
               )}
@@ -234,126 +202,6 @@ function CardCapStatusSection({ model }: CardsPageProps) {
                 <tr>
                   <td colSpan={8} className="empty-cell">
                     활성 카드혜택 rule이 없습니다.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CardPerformanceSection({ model }: CardsPageProps) {
-  const { summary } = model;
-  const structuredRows = summary.statementEstimates.filter((row) => row.structuredCount > 0);
-
-  return (
-    <Card className="transaction-panel">
-      <CardHeader>
-        <CardDescription>Performance Estimate Beta</CardDescription>
-        <div className="metric-card-top">
-          <CardTitle>카드 실적 예상 Beta</CardTitle>
-          <Badge tone="neutral">Beta</Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <p className="metric-detail">
-          실적 예상은 구조화된 실적금액 기준입니다. 기존 후잉 카드 거래는 승인금액이 없어 실적 예상에서 제외합니다.
-        </p>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>카드</th>
-                <th className="amount">실적 예상</th>
-                <th className="amount">승인금액</th>
-                <th className="amount">매입금액</th>
-                <th className="amount">적용 할인</th>
-                <th>데이터 품질</th>
-              </tr>
-            </thead>
-            <tbody>
-              {structuredRows.length > 0 ? structuredRows.map((row) => {
-                const estimate = calculateCardPerformanceEstimate({
-                  structuredPerformanceTotal: row.structuredPerformanceTotal,
-                  structuredApprovalTotal: row.structuredApprovalTotal,
-                  structuredPostingTotal: row.structuredPostingTotal,
-                  structuredDiscountTotal: row.structuredDiscountTotal,
-                  legacyPostingTotal: row.legacyPostingTotal,
-                });
-                const quality = performanceQuality(estimate.dataQuality);
-                return (
-                  <tr key={`${row.cardAccountType}:${row.cardAccountId}`}>
-                    <td>{row.cardName}</td>
-                    <td className="amount">{won(estimate.performanceEstimate)}</td>
-                    <td className="amount">{won(estimate.structuredApprovalTotal)}</td>
-                    <td className="amount">{won(estimate.structuredPostingTotal)}</td>
-                    <td className="amount">{won(estimate.structuredDiscountTotal)}</td>
-                    <td><Badge tone={quality.tone}>{quality.label}</Badge></td>
-                  </tr>
-                );
-              }) : (
-                <tr>
-                  <td colSpan={6} className="empty-cell">
-                    구조화된 실적 데이터가 없습니다. 기존 후잉 카드 거래는 실적 미확인으로 남겨 둡니다.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CardStatementSection({ model }: CardsPageProps) {
-  const { summary } = model;
-
-  return (
-    <Card className="transaction-panel">
-      <CardHeader>
-        <CardDescription>Statement Estimate Beta</CardDescription>
-        <div className="metric-card-top">
-          <CardTitle>카드 명세서 예측 Beta</CardTitle>
-          <Badge tone="neutral">Beta</Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <p className="metric-detail">
-          명세서 예상은 매입금액 기준입니다. 기존 후잉 카드 거래는 승인금액이 없어 legacy 추정으로 분리합니다.
-        </p>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>카드</th>
-                <th className="amount">명세서 예상</th>
-                <th className="amount">실적 기준 승인금액</th>
-                <th className="amount">적용 할인</th>
-                <th className="amount">legacy 추정</th>
-                <th>데이터 품질</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.statementEstimates.length > 0 ? summary.statementEstimates.map((row) => {
-                const quality = dataQuality(row.dataQuality);
-                return (
-                  <tr key={`${row.cardAccountType}:${row.cardAccountId}`}>
-                    <td>{row.cardName}</td>
-                    <td className="amount">{won(row.statementEstimate)}</td>
-                    <td className="amount">{won(row.structuredApprovalTotal)}</td>
-                    <td className="amount">{won(row.structuredDiscountTotal)}</td>
-                    <td className="amount">{won(row.legacyPostingTotal)}</td>
-                    <td><Badge tone={quality.tone}>{quality.label}</Badge></td>
-                  </tr>
-                );
-              }) : (
-                <tr>
-                  <td colSpan={6} className="empty-cell">
-                    카드 명세서 예측에 사용할 카드 지출 데이터가 아직 없습니다.
                   </td>
                 </tr>
               )}
