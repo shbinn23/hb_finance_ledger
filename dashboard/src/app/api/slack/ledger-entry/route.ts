@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { evaluateCardBenefit } from "@/lib/card-benefits/evaluator";
 import {
+  buildExpensePostingFromCardBenefit,
   buildExpenseRegistrationFailureView,
   buildExpenseRegistrationSuccessView,
   buildLedgerRegistrationFailureView,
@@ -32,9 +34,17 @@ import {
   parseIncomeLedgerSubmission,
   parseLedgerEntryTypeSelection,
   parseTransferLedgerSubmission,
+  type ExpenseBenefitTrackingStatus,
   type LedgerLocalSyncStatus,
   type WhooingEntryPayload,
 } from "@/features/slack/ledger-entry";
+import {
+  buildCardBenefitMonthlyContext,
+  getActiveCardBenefitRules,
+  insertCardBenefitEvent,
+} from "@/server/card-benefits/repository";
+import { buildExpenseCardBenefitEventInsert } from "@/server/card-benefits/expense-event";
+import { extractWhooingEntryId } from "@/server/whooing/entry-id";
 import { getSlackLedgerEntryAccounts } from "@/server/whooing/account-repository";
 import { syncWhooingEntriesForDate, WhooingLocalSyncError } from "@/server/whooing/sync-client";
 import { createWhooingEntry, WhooingWriteClientError } from "@/server/whooing/write-client";
@@ -133,6 +143,73 @@ async function createEntryAndSync(payload: WhooingEntryPayload, occurredDate: st
   }
 }
 
+function benefitMonthFromDate(value: string) {
+  return value.slice(0, 7);
+}
+
+async function evaluateExpenseCardBenefit(submission: ReturnType<typeof parseExpenseLedgerSubmission>) {
+  if (!submission || submission.discountRuleId === "none") {
+    return null;
+  }
+  if (submission.paymentAccountType !== "liabilities") {
+    throw new ExpensePostingValidationError(
+      "payment_account_id",
+      "카드 혜택은 카드/부채 결제수단을 선택해야 적용할 수 있습니다.",
+    );
+  }
+
+  const rules = await getActiveCardBenefitRules();
+  const selectedRule = rules.find((rule) => rule.ruleId === submission.discountRuleId);
+
+  const monthlyContext = await buildCardBenefitMonthlyContext(
+    benefitMonthFromDate(submission.occurredDate),
+    submission.discountRuleId,
+  );
+  const evaluation = evaluateCardBenefit({
+    occurredDate: submission.occurredDate,
+    selectedRuleId: submission.discountRuleId,
+    cardAccountType: "liabilities",
+    cardAccountId: submission.paymentAccountId,
+    expenseAccountId: submission.categoryAccountId,
+    merchant: submission.merchant,
+    approvalAmount: Number(submission.approvalAmount),
+    rules,
+    monthlyContext,
+  });
+
+  return {
+    evaluation,
+    ruleName: selectedRule?.name ?? "카드혜택",
+  };
+}
+
+async function storeExpenseCardBenefitEvent({
+  sectionId,
+  submission,
+  whooingPayload,
+  whooingResponse,
+  benefit,
+}: {
+  sectionId: string | undefined;
+  submission: NonNullable<ReturnType<typeof parseExpenseLedgerSubmission>>;
+  whooingPayload: WhooingEntryPayload;
+  whooingResponse: unknown;
+  benefit: NonNullable<Awaited<ReturnType<typeof evaluateExpenseCardBenefit>>>;
+}): Promise<ExpenseBenefitTrackingStatus> {
+  try {
+    await insertCardBenefitEvent(buildExpenseCardBenefitEventInsert({
+      sectionId: sectionId ?? null,
+      whooingEntryId: extractWhooingEntryId(whooingResponse),
+      entryDate: Number(whooingPayload.entry_date),
+      submission,
+      evaluation: benefit.evaluation,
+    }));
+    return "stored";
+  } catch {
+    return "failed";
+  }
+}
+
 async function handleSlashCommand(params: URLSearchParams) {
   const command = commandFrom(params.get("command"));
 
@@ -221,13 +298,19 @@ async function handleInteractivity(params: URLSearchParams) {
     }
 
     try {
-      const calculation = calculateExpensePosting(submission);
+      const benefit = await evaluateExpenseCardBenefit(submission);
+      const calculation = benefit
+        ? buildExpensePostingFromCardBenefit(submission, benefit.evaluation, benefit.ruleName)
+        : calculateExpensePosting(submission);
       const whooingPayload = buildWhooingExpenseEntryPayload({
         sectionId,
         submission,
         calculation,
       });
-      await createWhooingEntry(whooingPayload);
+      const whooingResponse = await createWhooingEntry(whooingPayload);
+      const benefitTrackingStatus = benefit
+        ? await storeExpenseCardBenefitEvent({ sectionId, submission, whooingPayload, whooingResponse, benefit })
+        : "skipped";
 
       // TODO: If Whooing POST + local sync approaches Slack's 3s limit, ack first
       // and move dashboard sync plus user notification to an async job/chat.postMessage.
@@ -237,7 +320,7 @@ async function handleInteractivity(params: URLSearchParams) {
         if (error instanceof WhooingLocalSyncError) {
           return NextResponse.json({
             response_action: "update",
-            view: buildExpenseRegistrationSuccessView(submission, calculation, "pending"),
+            view: buildExpenseRegistrationSuccessView(submission, calculation, "pending", benefitTrackingStatus),
           });
         }
 
@@ -246,7 +329,7 @@ async function handleInteractivity(params: URLSearchParams) {
 
       return NextResponse.json({
         response_action: "update",
-        view: buildExpenseRegistrationSuccessView(submission, calculation, "synced"),
+        view: buildExpenseRegistrationSuccessView(submission, calculation, "synced", benefitTrackingStatus),
       });
     } catch (error) {
       if (error instanceof ExpensePostingValidationError) {

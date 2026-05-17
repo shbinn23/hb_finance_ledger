@@ -1,0 +1,729 @@
+import { randomUUID } from "node:crypto";
+import { query } from "@/lib/db/postgres";
+import { getAccountDisplayName } from "@/lib/account-display-name";
+import { formatDisplayDate } from "@/lib/format";
+import {
+  calculateBenefitCapStatus,
+  calculateCardStatementEstimate,
+  savingRate,
+  type BenefitCapAutoStatus,
+  type CardStatementEstimate,
+} from "@/lib/card-benefits/assets-summary";
+import type {
+  CardBenefitRule,
+  PaymentChannel,
+} from "@/lib/card-benefits/types";
+import {
+  entryDateRangeForBenefitMonth,
+  monthlyContextFromAutomaticPerformance,
+} from "./repository-helpers";
+
+type RuleStatus = CardBenefitRule["status"];
+type DiscountType = CardBenefitRule["discountType"];
+type PostingPolicy = CardBenefitRule["postingPolicy"];
+const sectionId = process.env.WHOOING_SECTION_ID ?? "s152045";
+
+interface CardBenefitRuleDbRow {
+  rule_id: string;
+  card_account_type: "liabilities";
+  card_account_id: string;
+  name: string;
+  status: RuleStatus;
+  priority: number;
+  payment_channel: PaymentChannel | null;
+  min_approval_amount: string | number | null;
+  discount_type: DiscountType;
+  discount_rate_bps: number;
+  monthly_cap_tiers: unknown;
+  posting_policy: PostingPolicy;
+}
+
+interface CapUsageDbRow {
+  rule_id: string;
+  amount: string | number | null;
+}
+
+interface PerformanceAmountDbRow {
+  amount: string | number | null;
+}
+
+interface CardBenefitMonthlySummaryDbRow {
+  event_count: string | number;
+  approval_total: string | number | null;
+  discount_total: string | number | null;
+  posting_total: string | number | null;
+  unlinked_event_count: string | number;
+}
+
+interface CardBenefitRuleSummaryDbRow {
+  rule_id: string;
+  rule_name: string;
+  discount_amount: string | number | null;
+  event_count: string | number;
+}
+
+interface CardBenefitCardSummaryDbRow {
+  card_account_type: "liabilities";
+  card_account_id: string;
+  card_title: string;
+  discount_amount: string | number | null;
+  event_count: string | number;
+}
+
+interface CardBenefitRecentEventDbRow {
+  event_id: string;
+  entry_date: number;
+  card_account_type: "liabilities";
+  card_account_id: string;
+  card_title: string;
+  rule_name: string | null;
+  merchant: string | null;
+  approval_amount: string | number;
+  applied_discount_amount: string | number;
+  posting_amount: string | number;
+}
+
+interface CardBenefitCapStatusDbRow {
+  rule_id: string;
+  rule_name: string;
+  card_account_type: "liabilities";
+  card_account_id: string;
+  card_title: string;
+  monthly_cap_tiers: unknown;
+  previous_performance_amount: string | number | null;
+  event_discount_amount: string | number | null;
+  backfilled_discount_amount: string | number | null;
+}
+
+interface CardStatementEstimateDbRow {
+  card_account_type: "liabilities";
+  card_account_id: string;
+  card_title: string;
+  structured_approval_total: string | number | null;
+  structured_performance_total: string | number | null;
+  structured_posting_total: string | number | null;
+  structured_discount_total: string | number | null;
+  legacy_posting_total: string | number | null;
+  structured_count: string | number;
+  legacy_count: string | number;
+}
+
+export interface CardBenefitRuleSummary {
+  ruleId: string;
+  ruleName: string;
+  discountAmount: number;
+  eventCount: number;
+}
+
+export interface CardBenefitCardSummary {
+  cardAccountType: "liabilities";
+  cardAccountId: string;
+  cardName: string;
+  discountAmount: number;
+  eventCount: number;
+}
+
+export interface CardBenefitRecentEvent {
+  eventId: string;
+  date: string;
+  cardName: string;
+  ruleName: string;
+  merchant: string;
+  approvalAmount: number;
+  discountAmount: number;
+  postingAmount: number;
+}
+
+export interface CardBenefitCapStatus {
+  ruleId: string;
+  ruleName: string;
+  cardName: string;
+  previousMonthPerformanceAmount: number;
+  autoStatus: BenefitCapAutoStatus;
+  autoMonthlyCapAmount: number | null;
+  eventDiscountAmount: number;
+  backfilledDiscountAmount: number;
+  totalUsed: number;
+  remainingCap: number | null;
+  usageRate: number | null;
+}
+
+export interface CardStatementEstimateRow extends CardStatementEstimate {
+  cardAccountType: "liabilities";
+  cardAccountId: string;
+  cardName: string;
+  structuredPerformanceTotal: number;
+  structuredCount: number;
+  legacyCount: number;
+}
+
+export interface CardBenefitAssetsSummary {
+  month: string;
+  monthLabel: string;
+  eventCount: number;
+  approvalTotal: number;
+  discountTotal: number;
+  postingTotal: number;
+  effectiveSavingRate: number;
+  unlinkedEventCount: number;
+  ruleDiscounts: CardBenefitRuleSummary[];
+  cardDiscounts: CardBenefitCardSummary[];
+  capStatuses: CardBenefitCapStatus[];
+  recentEvents: CardBenefitRecentEvent[];
+  statementEstimates: CardStatementEstimateRow[];
+}
+
+export interface CardBenefitEventInsert {
+  eventId?: string;
+  sectionId?: string | null;
+  whooingEntryId?: number | null;
+  entryDate: number;
+  ruleId: string | null;
+  cardAccountType: "liabilities";
+  cardAccountId: string;
+  expenseAccountId?: string | null;
+  merchant: string;
+  paymentChannel: PaymentChannel;
+  approvalAmount: number;
+  performanceAmount: number;
+  eligibleDiscountAmount: number;
+  appliedDiscountAmount: number;
+  postingAmount: number;
+  capUsedBefore: number | null;
+  capUsedAfter: number | null;
+  evaluationStatus: string;
+  evaluationReason: string;
+  idempotencyKey?: string | null;
+}
+
+function numberFromDb(value: string | number | null | undefined) {
+  return Number(value ?? 0);
+}
+
+function monthNumberFromValue(month: string | null | undefined) {
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) return null;
+  return Number(month.replace("-", ""));
+}
+
+function monthLabel(month: string) {
+  return `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월`;
+}
+
+function previousBenefitMonth(month: string) {
+  const year = Number(month.slice(0, 4));
+  const monthIndex = Number(month.slice(5, 7));
+  const previousYear = monthIndex === 1 ? year - 1 : year;
+  const previousMonth = monthIndex === 1 ? 12 : monthIndex - 1;
+  return `${previousYear}-${String(previousMonth).padStart(2, "0")}`;
+}
+
+async function resolveBenefitMonth(month?: string | null) {
+  const requested = monthNumberFromValue(month);
+  if (requested) return `${String(requested).slice(0, 4)}-${String(requested).slice(4, 6)}`;
+
+  const result = await query<{ ym: string | null }>(
+    `
+    select coalesce(
+      (select (floor(max(entry_date))::int / 100)::text from app.card_benefit_events),
+      (select (floor(max(entry_date))::int / 100)::text from whooing.entries where section_id = $1)
+    ) as ym
+    `,
+    [sectionId],
+  );
+  const ym = result.rows[0]?.ym;
+  if (!ym || ym.length !== 6) return "";
+  return `${ym.slice(0, 4)}-${ym.slice(4, 6)}`;
+}
+
+function displayCardName(accountType: string, accountId: string, sourceTitle: string) {
+  return getAccountDisplayName(accountType, accountId, sourceTitle);
+}
+
+function monthlyCapTiersFromDb(value: unknown): CardBenefitRule["monthlyCapTiers"] {
+  if (Array.isArray(value)) {
+    return value.map((item) => ({
+      performanceThreshold: numberFromDb((item as { performanceThreshold?: unknown }).performanceThreshold as number),
+      monthlyCapAmount: numberFromDb((item as { monthlyCapAmount?: unknown }).monthlyCapAmount as number),
+    }));
+  }
+  if (typeof value === "string") {
+    return monthlyCapTiersFromDb(JSON.parse(value) as unknown);
+  }
+
+  return [];
+}
+
+function toRule(row: CardBenefitRuleDbRow): CardBenefitRule {
+  return {
+    ruleId: row.rule_id,
+    cardAccountType: row.card_account_type,
+    cardAccountId: row.card_account_id,
+    name: row.name,
+    status: row.status,
+    priority: row.priority,
+    paymentChannel: row.payment_channel,
+    minApprovalAmount: row.min_approval_amount === null ? null : numberFromDb(row.min_approval_amount),
+    discountType: row.discount_type,
+    discountRateBps: row.discount_rate_bps,
+    monthlyCapTiers: monthlyCapTiersFromDb(row.monthly_cap_tiers),
+    postingPolicy: row.posting_policy,
+  };
+}
+
+export async function getActiveCardBenefitRules(): Promise<CardBenefitRule[]> {
+  const result = await query<CardBenefitRuleDbRow>(`
+    select
+      rule_id,
+      card_account_type,
+      card_account_id,
+      name,
+      status,
+      priority,
+      payment_channel,
+      min_approval_amount,
+      discount_type,
+      discount_rate_bps,
+      monthly_cap_tiers,
+      posting_policy
+    from app.card_benefit_rules
+    where status = 'active'
+    order by priority, rule_id
+  `);
+
+  return result.rows.map(toRule);
+}
+
+export async function getCapUsedByRule(benefitMonth: string) {
+  const { startDate, endDate } = entryDateRangeForBenefitMonth(benefitMonth);
+  const result = await query<CapUsageDbRow>(
+    `
+    select rule_id, coalesce(sum(applied_discount_amount), 0) as amount
+    from app.card_benefit_events
+    where entry_date >= $1
+      and entry_date < $2
+      and rule_id is not null
+    group by rule_id
+    `,
+    [startDate, endDate],
+  );
+
+  return Object.fromEntries(result.rows.map((row) => [row.rule_id, numberFromDb(row.amount)]));
+}
+
+async function getPreviousStructuredPerformanceAmount(benefitMonth: string, ruleId: string) {
+  const previousMonth = previousBenefitMonth(benefitMonth);
+  const { startDate, endDate } = entryDateRangeForBenefitMonth(previousMonth);
+  const result = await query<PerformanceAmountDbRow>(
+    `
+    with selected_rule as (
+      select card_account_type, card_account_id
+      from app.card_benefit_rules
+      where rule_id = $3
+    )
+    select coalesce(sum(performance_amount), 0) as amount
+    from app.card_benefit_events e
+    join selected_rule r
+      on r.card_account_type = e.card_account_type
+     and r.card_account_id = e.card_account_id
+    where e.entry_date >= $1
+      and e.entry_date < $2
+      and (e.section_id = $4 or e.section_id is null)
+    `,
+    [startDate, endDate, ruleId, sectionId],
+  );
+
+  return numberFromDb(result.rows[0]?.amount);
+}
+
+export async function buildCardBenefitMonthlyContext(benefitMonth: string, ruleId: string) {
+  const [performanceAmount, capUsedByRule] = await Promise.all([
+    getPreviousStructuredPerformanceAmount(benefitMonth, ruleId),
+    getCapUsedByRule(benefitMonth),
+  ]);
+
+  return monthlyContextFromAutomaticPerformance({ benefitMonth, performanceAmount, capUsedByRule });
+}
+
+export async function insertCardBenefitEvent(event: CardBenefitEventInsert) {
+  await query(
+    `
+    insert into app.card_benefit_events (
+      event_id,
+      section_id,
+      whooing_entry_id,
+      entry_date,
+      rule_id,
+      card_account_type,
+      card_account_id,
+      expense_account_id,
+      merchant,
+      payment_channel,
+      approval_amount,
+      performance_amount,
+      eligible_discount_amount,
+      applied_discount_amount,
+      posting_amount,
+      cap_used_before,
+      cap_used_after,
+      evaluation_status,
+      evaluation_reason,
+      idempotency_key
+    ) values (
+      $1, $2, $3, $4, $5,
+      $6, $7, $8, $9, $10,
+      $11, $12, $13, $14, $15,
+      $16, $17, $18, $19, $20
+    )
+    on conflict (idempotency_key) where idempotency_key is not null do nothing
+    `,
+    [
+      event.eventId ?? randomUUID(),
+      event.sectionId ?? null,
+      event.whooingEntryId ?? null,
+      event.entryDate,
+      event.ruleId,
+      event.cardAccountType,
+      event.cardAccountId,
+      event.expenseAccountId ?? null,
+      event.merchant,
+      event.paymentChannel,
+      event.approvalAmount,
+      event.performanceAmount,
+      event.eligibleDiscountAmount,
+      event.appliedDiscountAmount,
+      event.postingAmount,
+      event.capUsedBefore,
+      event.capUsedAfter,
+      event.evaluationStatus,
+      event.evaluationReason,
+      event.idempotencyKey ?? null,
+    ],
+  );
+}
+
+export async function getCardBenefitMonthlyAssetsSummary(month?: string | null): Promise<CardBenefitAssetsSummary> {
+  const benefitMonth = await resolveBenefitMonth(month);
+  if (!benefitMonth) {
+    return emptyCardBenefitAssetsSummary("");
+  }
+
+  const { startDate, endDate } = entryDateRangeForBenefitMonth(benefitMonth);
+  const previousMonth = previousBenefitMonth(benefitMonth);
+  const { startDate: previousStartDate, endDate: previousEndDate } = entryDateRangeForBenefitMonth(previousMonth);
+  const [
+    totals,
+    ruleDiscounts,
+    cardDiscounts,
+    capStatuses,
+    recentEvents,
+    statementEstimates,
+  ] = await Promise.all([
+    query<CardBenefitMonthlySummaryDbRow>(
+      `
+      select
+        count(*)::text as event_count,
+        coalesce(sum(approval_amount), 0)::text as approval_total,
+        coalesce(sum(applied_discount_amount), 0)::text as discount_total,
+        coalesce(sum(posting_amount), 0)::text as posting_total,
+        count(*) filter (where whooing_entry_id is null)::text as unlinked_event_count
+      from app.card_benefit_events
+      where entry_date >= $1
+        and entry_date < $2
+        and (section_id = $3 or section_id is null)
+      `,
+      [startDate, endDate, sectionId],
+    ),
+    query<CardBenefitRuleSummaryDbRow>(
+      `
+      select
+        e.rule_id,
+        coalesce(r.name, e.rule_id, '혜택 없음') as rule_name,
+        coalesce(sum(e.applied_discount_amount), 0)::text as discount_amount,
+        count(*)::text as event_count
+      from app.card_benefit_events e
+      left join app.card_benefit_rules r
+        on r.rule_id = e.rule_id
+      where e.entry_date >= $1
+        and e.entry_date < $2
+        and (e.section_id = $3 or e.section_id is null)
+      group by e.rule_id, r.name
+      order by sum(e.applied_discount_amount) desc
+      limit 8
+      `,
+      [startDate, endDate, sectionId],
+    ),
+    query<CardBenefitCardSummaryDbRow>(
+      `
+      select
+        e.card_account_type,
+        e.card_account_id,
+        coalesce(a.title, e.card_account_id) as card_title,
+        coalesce(sum(e.applied_discount_amount), 0)::text as discount_amount,
+        count(*)::text as event_count
+      from app.card_benefit_events e
+      left join whooing.accounts a
+        on a.account_type = e.card_account_type
+       and a.account_id = e.card_account_id
+       and a.section_id = $3
+      where e.entry_date >= $1
+        and e.entry_date < $2
+        and (e.section_id = $3 or e.section_id is null)
+      group by e.card_account_type, e.card_account_id, a.title
+      order by sum(e.applied_discount_amount) desc
+      limit 8
+      `,
+      [startDate, endDate, sectionId],
+    ),
+    query<CardBenefitCapStatusDbRow>(
+      `
+      with event_usage as (
+        select
+          rule_id,
+          coalesce(sum(applied_discount_amount), 0) as event_discount_amount,
+          coalesce(sum(applied_discount_amount) filter (
+            where evaluation_reason like '%backfill%'
+               or evaluation_status = 'manual_backfill'
+          ), 0) as backfilled_discount_amount
+        from app.card_benefit_events
+        where entry_date >= $1
+          and entry_date < $2
+          and rule_id is not null
+          and (section_id = $5 or section_id is null)
+        group by rule_id
+      ),
+      previous_performance as (
+        select
+          card_account_type,
+          card_account_id,
+          coalesce(sum(performance_amount), 0) as previous_performance_amount
+        from app.card_benefit_events
+        where entry_date >= $3
+          and entry_date < $4
+          and (section_id = $5 or section_id is null)
+        group by card_account_type, card_account_id
+      )
+      select
+        r.rule_id,
+        r.name as rule_name,
+        r.card_account_type,
+        r.card_account_id,
+        coalesce(a.title, r.card_account_id) as card_title,
+        r.monthly_cap_tiers,
+        coalesce(p.previous_performance_amount, 0)::text as previous_performance_amount,
+        coalesce(u.event_discount_amount, 0)::text as event_discount_amount,
+        coalesce(u.backfilled_discount_amount, 0)::text as backfilled_discount_amount
+      from app.card_benefit_rules r
+      left join event_usage u
+        on u.rule_id = r.rule_id
+      left join previous_performance p
+        on p.card_account_type = r.card_account_type
+       and p.card_account_id = r.card_account_id
+      left join whooing.accounts a
+        on a.account_type = r.card_account_type
+       and a.account_id = r.card_account_id
+       and a.section_id = $5
+      where r.status = 'active'
+      order by r.priority nulls last, r.rule_id
+      `,
+      [startDate, endDate, previousStartDate, previousEndDate, sectionId],
+    ),
+    query<CardBenefitRecentEventDbRow>(
+      `
+      select
+        e.event_id::text,
+        e.entry_date,
+        e.card_account_type,
+        e.card_account_id,
+        coalesce(a.title, e.card_account_id) as card_title,
+        r.name as rule_name,
+        e.merchant,
+        e.approval_amount::text,
+        e.applied_discount_amount::text,
+        e.posting_amount::text
+      from app.card_benefit_events e
+      left join app.card_benefit_rules r
+        on r.rule_id = e.rule_id
+      left join whooing.accounts a
+        on a.account_type = e.card_account_type
+       and a.account_id = e.card_account_id
+       and a.section_id = $3
+      where e.entry_date >= $1
+        and e.entry_date < $2
+        and (e.section_id = $3 or e.section_id is null)
+      order by e.created_at desc
+      limit 8
+      `,
+      [startDate, endDate, sectionId],
+    ),
+    query<CardStatementEstimateDbRow>(
+      `
+      with structured as (
+        select
+          card_account_type,
+          card_account_id,
+          sum(approval_amount) as structured_approval_total,
+          sum(performance_amount) as structured_performance_total,
+          sum(posting_amount) as structured_posting_total,
+          sum(applied_discount_amount) as structured_discount_total,
+          count(*) as structured_count
+        from app.card_benefit_events
+        where entry_date >= $1
+          and entry_date < $2
+          and (section_id = $3 or section_id is null)
+        group by card_account_type, card_account_id
+      ),
+      legacy as (
+        select
+          e.r_account as card_account_type,
+          e.r_account_id as card_account_id,
+          sum(e.money) as legacy_posting_total,
+          count(*) as legacy_count
+        from whooing.entries e
+        where e.section_id = $3
+          and e.entry_date >= $1
+          and e.entry_date < $2
+          and e.l_account = 'expenses'
+          and e.r_account = 'liabilities'
+          and not exists (
+            select 1
+            from app.card_benefit_events be
+            where be.whooing_entry_id = e.entry_id
+              and (be.section_id = $3 or be.section_id is null)
+          )
+        group by e.r_account, e.r_account_id
+      ),
+      merged as (
+        select
+          coalesce(s.card_account_type, l.card_account_type) as card_account_type,
+          coalesce(s.card_account_id, l.card_account_id) as card_account_id,
+          s.structured_approval_total,
+          s.structured_performance_total,
+          s.structured_posting_total,
+          s.structured_discount_total,
+          coalesce(s.structured_count, 0) as structured_count,
+          l.legacy_posting_total,
+          coalesce(l.legacy_count, 0) as legacy_count
+        from structured s
+        full outer join legacy l
+          on l.card_account_type = s.card_account_type
+         and l.card_account_id = s.card_account_id
+      )
+      select
+        m.card_account_type,
+        m.card_account_id,
+        coalesce(a.title, m.card_account_id) as card_title,
+        coalesce(m.structured_approval_total, 0)::text as structured_approval_total,
+        coalesce(m.structured_performance_total, 0)::text as structured_performance_total,
+        coalesce(m.structured_posting_total, 0)::text as structured_posting_total,
+        coalesce(m.structured_discount_total, 0)::text as structured_discount_total,
+        coalesce(m.legacy_posting_total, 0)::text as legacy_posting_total,
+        m.structured_count::text,
+        m.legacy_count::text
+      from merged m
+      left join whooing.accounts a
+        on a.account_type = m.card_account_type
+       and a.account_id = m.card_account_id
+       and a.section_id = $3
+      where coalesce(m.structured_approval_total, 0) <> 0
+         or coalesce(m.legacy_posting_total, 0) <> 0
+      order by coalesce(m.structured_approval_total, 0) + coalesce(m.legacy_posting_total, 0) desc
+      limit 12
+      `,
+      [startDate, endDate, sectionId],
+    ),
+  ]);
+
+  const total = totals.rows[0];
+  const approvalTotal = numberFromDb(total?.approval_total);
+  const discountTotal = numberFromDb(total?.discount_total);
+
+  return {
+    month: benefitMonth,
+    monthLabel: monthLabel(benefitMonth),
+    eventCount: Number(total?.event_count ?? 0),
+    approvalTotal,
+    discountTotal,
+    postingTotal: numberFromDb(total?.posting_total),
+    effectiveSavingRate: savingRate(discountTotal, approvalTotal),
+    unlinkedEventCount: Number(total?.unlinked_event_count ?? 0),
+    ruleDiscounts: ruleDiscounts.rows.map((row) => ({
+      ruleId: row.rule_id,
+      ruleName: row.rule_name,
+      discountAmount: numberFromDb(row.discount_amount),
+      eventCount: Number(row.event_count),
+    })),
+    cardDiscounts: cardDiscounts.rows.map((row) => ({
+      cardAccountType: row.card_account_type,
+      cardAccountId: row.card_account_id,
+      cardName: displayCardName(row.card_account_type, row.card_account_id, row.card_title),
+      discountAmount: numberFromDb(row.discount_amount),
+      eventCount: Number(row.event_count),
+    })),
+    capStatuses: capStatuses.rows.map((row) => {
+      const previousMonthPerformanceAmount = numberFromDb(row.previous_performance_amount);
+      const eventDiscountAmount = numberFromDb(row.event_discount_amount);
+      const backfilledDiscountAmount = numberFromDb(row.backfilled_discount_amount);
+      const totalUsed = eventDiscountAmount;
+      const calculatedCap = calculateBenefitCapStatus({
+        monthlyCapTiers: monthlyCapTiersFromDb(row.monthly_cap_tiers),
+        previousMonthStructuredPerformance: previousMonthPerformanceAmount,
+        currentDiscountUsed: totalUsed,
+      });
+      return {
+        ruleId: row.rule_id,
+        ruleName: row.rule_name,
+        cardName: displayCardName(row.card_account_type, row.card_account_id, row.card_title),
+        previousMonthPerformanceAmount,
+        autoStatus: calculatedCap.autoStatus,
+        autoMonthlyCapAmount: calculatedCap.autoMonthlyCapAmount,
+        eventDiscountAmount,
+        backfilledDiscountAmount,
+        totalUsed,
+        remainingCap: calculatedCap.remainingCap,
+        usageRate: calculatedCap.usageRate,
+      };
+    }),
+    recentEvents: recentEvents.rows.map((row) => ({
+      eventId: row.event_id,
+      date: formatDisplayDate(String(Math.floor(row.entry_date))),
+      cardName: displayCardName(row.card_account_type, row.card_account_id, row.card_title),
+      ruleName: row.rule_name ?? "혜택 없음",
+      merchant: row.merchant?.trim() || "카드혜택 거래",
+      approvalAmount: numberFromDb(row.approval_amount),
+      discountAmount: numberFromDb(row.applied_discount_amount),
+      postingAmount: numberFromDb(row.posting_amount),
+    })),
+    statementEstimates: statementEstimates.rows.map((row) => ({
+      cardAccountType: row.card_account_type,
+      cardAccountId: row.card_account_id,
+      cardName: displayCardName(row.card_account_type, row.card_account_id, row.card_title),
+      structuredCount: Number(row.structured_count),
+      legacyCount: Number(row.legacy_count),
+      structuredPerformanceTotal: numberFromDb(row.structured_performance_total),
+      ...calculateCardStatementEstimate({
+        structuredApprovalTotal: numberFromDb(row.structured_approval_total),
+        structuredPostingTotal: numberFromDb(row.structured_posting_total),
+        structuredDiscountTotal: numberFromDb(row.structured_discount_total),
+        legacyPostingTotal: numberFromDb(row.legacy_posting_total),
+      }),
+    })),
+  };
+}
+
+function emptyCardBenefitAssetsSummary(month: string): CardBenefitAssetsSummary {
+  return {
+    month,
+    monthLabel: month ? monthLabel(month) : "최근 월",
+    eventCount: 0,
+    approvalTotal: 0,
+    discountTotal: 0,
+    postingTotal: 0,
+    effectiveSavingRate: 0,
+    unlinkedEventCount: 0,
+    ruleDiscounts: [],
+    cardDiscounts: [],
+    capStatuses: [],
+    recentEvents: [],
+    statementEstimates: [],
+  };
+}

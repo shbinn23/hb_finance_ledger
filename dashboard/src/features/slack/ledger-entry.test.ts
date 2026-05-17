@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildExpenseLedgerModal,
   buildLedgerEntryTypeSelectModal,
   buildLedgerEntryModalForType,
+  buildExpensePostingFromCardBenefit,
   buildWhooingBalanceAdjustmentEntryPayload,
   buildWhooingCardPaymentEntryPayload,
+  EXPENSE_BLOCK_IDS,
   EXPENSE_LEDGER_CALLBACK_ID,
   BALANCE_ADJUSTMENT_BLOCK_IDS,
   BALANCE_ADJUSTMENT_LEDGER_CALLBACK_ID,
@@ -17,6 +20,7 @@ import {
   INCOME_LEDGER_CALLBACK_ID,
   IncomePostingValidationError,
   LedgerPostingValidationError,
+  ExpensePostingValidationError,
   isIncomeLedgerSubmission,
   isLedgerEntryTypeSelectionSubmission,
   LEDGER_ENTRY_TYPE_SELECT_ACTION_ID,
@@ -27,6 +31,7 @@ import {
   parseLedgerEntryTypeSelection,
   parseBalanceAdjustmentLedgerSubmission,
   parseCardPaymentLedgerSubmission,
+  parseExpenseLedgerSubmission,
   parseIncomeLedgerSubmission,
   parseTransferLedgerSubmission,
 } from "./ledger-entry.ts";
@@ -36,6 +41,41 @@ function selected(value: string, label: string) {
     selected_option: {
       value,
       text: { text: label },
+    },
+  };
+}
+
+function expensePayload(overrides = {}) {
+  return {
+    type: "view_submission",
+    view: {
+      callback_id: EXPENSE_LEDGER_CALLBACK_ID,
+      state: {
+        values: {
+          [EXPENSE_BLOCK_IDS.approvalAmount]: {
+            [EXPENSE_BLOCK_IDS.approvalAmount]: { value: "100000" },
+          },
+          [EXPENSE_BLOCK_IDS.occurredDate]: {
+            [EXPENSE_BLOCK_IDS.occurredDate]: { selected_date: "2026-05-17" },
+          },
+          [EXPENSE_BLOCK_IDS.merchant]: {
+            [EXPENSE_BLOCK_IDS.merchant]: { value: "네이버페이" },
+          },
+          [EXPENSE_BLOCK_IDS.categoryAccountId]: {
+            [EXPENSE_BLOCK_IDS.categoryAccountId]: selected("expenses:x1", "생활비 / 쇼핑"),
+          },
+          [EXPENSE_BLOCK_IDS.paymentAccountId]: {
+            [EXPENSE_BLOCK_IDS.paymentAccountId]: selected("liabilities:x45", "하나 MG+S"),
+          },
+          [EXPENSE_BLOCK_IDS.discountRuleId]: {
+            [EXPENSE_BLOCK_IDS.discountRuleId]: selected("none", "혜택 없음"),
+          },
+          [EXPENSE_BLOCK_IDS.userMemo]: {
+            [EXPENSE_BLOCK_IDS.userMemo]: { value: "테스트" },
+          },
+          ...overrides,
+        },
+      },
     },
   };
 }
@@ -173,6 +213,123 @@ function balanceAdjustmentPayload(overrides = {}) {
     },
   };
 }
+
+test("builds expense ledger modal without payment channel field", () => {
+  const modal = buildExpenseLedgerModal({
+    expenseCategories: [{ accountType: "expenses", accountId: "x1", title: "생활비 / 쇼핑" }],
+    paymentAccounts: [{ accountType: "liabilities", accountId: "x45", title: "하나 MG+S" }],
+  });
+
+  const paymentChannelBlock = modal.blocks.find((block) => block.block_id === "payment_channel");
+
+  assert.equal(paymentChannelBlock, undefined);
+});
+
+test("builds expense ledger modal with card benefit rule options", () => {
+  const modal = buildLedgerEntryModalForType("expense", {
+    expenseCategories: [{ accountType: "expenses", accountId: "x1", title: "생활비 / 쇼핑" }],
+    paymentAccounts: [{ accountType: "liabilities", accountId: "x45", title: "하나 MG+S" }],
+    incomeCategories: [],
+    depositAccounts: [],
+    assetAccounts: [],
+    liabilityAccounts: [],
+    capitalAccounts: [],
+  });
+
+  const cardBenefitBlock = modal.blocks.find((block) => block.block_id === EXPENSE_BLOCK_IDS.discountRuleId);
+  const paymentChannelBlock = modal.blocks.find((block) => block.block_id === "payment_channel");
+
+  assert.equal(paymentChannelBlock, undefined);
+  assert.ok(cardBenefitBlock);
+  assert.deepEqual(
+    cardBenefitBlock.element.options.map((item) => item.value),
+    [
+      "none",
+      "hana_mgs_simple_pay_10p",
+      "shinhan_lady_lunch_5p",
+      "shinhan_lady_medical_5p",
+      "shinhan_lady_shopping_3p",
+    ],
+  );
+  assert.deepEqual(
+    cardBenefitBlock.element.options.map((item) => item.text.text),
+    [
+      "혜택 없음",
+      "하나 MG+S · 간편결제 10%",
+      "신한 레이디 · 점심 5%",
+      "신한 레이디 · 병원/약국 5%",
+      "신한 레이디 · 쇼핑 3%",
+    ],
+  );
+});
+
+test("parses selected card benefit rule from Slack view payload", () => {
+  const submission = parseExpenseLedgerSubmission(expensePayload({
+    [EXPENSE_BLOCK_IDS.discountRuleId]: {
+      [EXPENSE_BLOCK_IDS.discountRuleId]: selected("hana_mgs_simple_pay_10p", "하나 MG+S · 간편결제 10%"),
+    },
+  }));
+
+  assert.ok(submission);
+  assert.equal(submission.discountRuleId, "hana_mgs_simple_pay_10p");
+});
+
+test("builds expense posting calculation from card benefit evaluation", () => {
+  const submission = parseExpenseLedgerSubmission(expensePayload());
+  assert.ok(submission);
+
+  const calculation = buildExpensePostingFromCardBenefit(submission, {
+    ruleId: "hana_mgs_simple_pay_10p",
+    paymentChannel: "simple_pay",
+    eligible: true,
+    reason: "eligible",
+    approvalAmount: 100_000,
+    performanceAmount: 100_000,
+    eligibleDiscountAmount: 10_000,
+    appliedDiscountAmount: 1_000,
+    postingAmount: 99_000,
+    monthlyCapAmount: 30_000,
+    capUsedBefore: 29_000,
+    capUsedAfter: 30_000,
+  }, "하나 MG+S 간편결제 10%");
+
+  assert.equal(calculation.approvalAmount, 100_000);
+  assert.equal(calculation.discountRuleId, "hana_mgs_simple_pay_10p");
+  assert.equal(calculation.discountRuleLabel, "하나 MG+S 간편결제 10%");
+  assert.equal(calculation.discountAmount, 1_000);
+  assert.equal(calculation.postingAmount, 99_000);
+  assert.match(calculation.mergedMemo, /사용자 선택 기준/);
+  assert.match(calculation.mergedMemo, /이론할인액 10,000원/);
+  assert.match(calculation.mergedMemo, /적용할인액 1,000원/);
+  assert.match(calculation.mergedMemo, /후잉등록금액 99,000원/);
+});
+
+test("rejects selected card benefit when automatic cap cannot be calculated", () => {
+  const submission = parseExpenseLedgerSubmission(expensePayload());
+  assert.ok(submission);
+
+  assert.throws(
+    () => buildExpensePostingFromCardBenefit(submission, {
+      ruleId: "hana_mgs_simple_pay_10p",
+      paymentChannel: "simple_pay",
+      eligible: false,
+      reason: "automatic_cap_unavailable",
+      approvalAmount: 100_000,
+      performanceAmount: 100_000,
+      eligibleDiscountAmount: 0,
+      appliedDiscountAmount: 0,
+      postingAmount: 100_000,
+      monthlyCapAmount: null,
+      capUsedBefore: 0,
+      capUsedAfter: 0,
+    }, "하나 MG+S 간편결제 10%"),
+    (error) => (
+      error instanceof ExpensePostingValidationError
+      && error.blockId === EXPENSE_BLOCK_IDS.discountRuleId
+      && /전월 구조화 실적/.test(error.message)
+    ),
+  );
+});
 
 test("parses income ledger submission from Slack view payload", () => {
   const payload = incomePayload();

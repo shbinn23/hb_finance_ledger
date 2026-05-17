@@ -46,8 +46,8 @@ const sectionMeta: Record<SectionKey, SectionViewModel["header"]> = {
   },
   assets: {
     eyebrow: "Balance Sheet",
-    title: "자산·카드",
-    description: "후잉의 자산과 부채 계정 잔액을 그대로 계산해 계정별 비중과 카드 미결제를 확인합니다.",
+    title: "자산·부채",
+    description: "후잉의 자산과 부채 계정 잔액을 그대로 계산해 계정별 비중과 미결제 부채를 확인합니다.",
     badge: "후잉 잔액",
   },
   analysis: {

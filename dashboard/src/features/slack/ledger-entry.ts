@@ -1,3 +1,5 @@
+import type { CardBenefitEvaluationResult } from "@/lib/card-benefits/types";
+
 export const EXPENSE_LEDGER_CALLBACK_ID = "expense_ledger_entry";
 export const INCOME_LEDGER_CALLBACK_ID = "income_ledger_entry";
 export const TRANSFER_LEDGER_CALLBACK_ID = "transfer_ledger_entry";
@@ -70,8 +72,10 @@ export const BALANCE_ADJUSTMENT_ACTION_IDS = BALANCE_ADJUSTMENT_BLOCK_IDS;
 
 export const DISCOUNT_RULES = [
   { id: "none", label: "혜택 없음", type: "none" },
-  { id: "lunch_5_percent", label: "점심시간 5% 할인", type: "rate", rate: 0.05 },
-  { id: "coffee_10_percent", label: "커피 10% 할인", type: "rate", rate: 0.10 },
+  { id: "hana_mgs_simple_pay_10p", label: "하나 MG+S · 간편결제 10%", type: "card_benefit" },
+  { id: "shinhan_lady_lunch_5p", label: "신한 레이디 · 점심 5%", type: "card_benefit" },
+  { id: "shinhan_lady_medical_5p", label: "신한 레이디 · 병원/약국 5%", type: "card_benefit" },
+  { id: "shinhan_lady_shopping_3p", label: "신한 레이디 · 쇼핑 3%", type: "card_benefit" },
 ] as const;
 
 const SLACK_STATIC_SELECT_OPTION_LIMIT = 100;
@@ -216,6 +220,7 @@ export interface WhooingEntryPayload {
 export type ExpenseLocalSyncStatus = "synced" | "pending";
 export type IncomeLocalSyncStatus = "synced" | "pending";
 export type LedgerLocalSyncStatus = "synced" | "pending";
+export type ExpenseBenefitTrackingStatus = "stored" | "failed" | "skipped";
 
 export class ExpensePostingValidationError extends Error {
   public readonly blockId: string;
@@ -423,7 +428,7 @@ function discountRuleById(discountRuleId: string) {
 
 function discountAmountFor(approvalAmount: number, rule: typeof DISCOUNT_RULES[number]) {
   if (rule.type === "none") return 0;
-  return Math.floor(approvalAmount * rule.rate);
+  return 0;
 }
 
 function won(value: number) {
@@ -490,6 +495,25 @@ function mergedMemo(userMemo: string, approvalAmount: number, ruleLabel: string,
   return parts.join(" / ");
 }
 
+function mergedCardBenefitMemo(
+  submission: Pick<ExpenseModalSubmission, "userMemo">,
+  evaluation: CardBenefitEvaluationResult,
+  ruleLabel: string,
+) {
+  const parts = [
+    submission.userMemo.trim(),
+    `승인금액 ${won(evaluation.approvalAmount)}`,
+    `카드혜택 ${ruleLabel}`,
+    "사용자 선택 기준",
+    `이론할인액 ${won(evaluation.eligibleDiscountAmount)}`,
+    `적용할인액 ${won(evaluation.appliedDiscountAmount)}`,
+    `후잉등록금액 ${won(evaluation.postingAmount)}`,
+    evaluation.reason === "automatic_cap_unavailable" ? "카드혜택 미적용: 전월 구조화 실적 없음" : "",
+  ].filter(Boolean);
+
+  return parts.join(" / ");
+}
+
 export function calculateExpensePosting(
   submission: Pick<ExpenseModalSubmission, "approvalAmount" | "discountRuleId" | "userMemo">,
 ): ExpensePostingCalculation {
@@ -512,6 +536,34 @@ export function calculateExpensePosting(
     discountAmount,
     postingAmount,
     mergedMemo: mergedMemo(submission.userMemo, approvalAmount, rule.label, discountAmount),
+  };
+}
+
+export function buildExpensePostingFromCardBenefit(
+  submission: Pick<ExpenseModalSubmission, "userMemo">,
+  evaluation: CardBenefitEvaluationResult,
+  ruleLabel: string,
+): ExpensePostingCalculation {
+  if (evaluation.reason === "automatic_cap_unavailable") {
+    throw new ExpensePostingValidationError(
+      EXPENSE_BLOCK_IDS.discountRuleId,
+      "전월 구조화 실적이 없어 이 카드혜택 한도를 자동 산정할 수 없습니다.",
+    );
+  }
+  if (!Number.isInteger(evaluation.postingAmount) || evaluation.postingAmount <= 0) {
+    throw new ExpensePostingValidationError(
+      EXPENSE_BLOCK_IDS.approvalAmount,
+      "카드 혜택 적용 후 등록 금액은 0보다 커야 합니다.",
+    );
+  }
+
+  return {
+    approvalAmount: evaluation.approvalAmount,
+    discountRuleId: evaluation.ruleId ?? "none",
+    discountRuleLabel: ruleLabel,
+    discountAmount: evaluation.appliedDiscountAmount,
+    postingAmount: evaluation.postingAmount,
+    mergedMemo: mergedCardBenefitMemo(submission, evaluation, ruleLabel),
   };
 }
 
@@ -1084,6 +1136,7 @@ export function buildExpenseRegistrationSuccessView(
   submission: ExpenseModalSubmission,
   calculation: ExpensePostingCalculation,
   syncStatus: ExpenseLocalSyncStatus,
+  benefitTrackingStatus: ExpenseBenefitTrackingStatus = "skipped",
 ) {
   const synced = syncStatus === "synced";
 
@@ -1101,6 +1154,10 @@ export function buildExpenseRegistrationSuccessView(
       ...(!synced ? [{
         type: "section",
         text: markdownText("대시보드 반영은 잠시 후 확인하세요."),
+      }] : []),
+      ...(benefitTrackingStatus === "failed" ? [{
+        type: "section",
+        text: markdownText("후잉 등록 완료. 카드혜택 추적 저장은 실패했습니다."),
       }] : []),
       {
         type: "section",
