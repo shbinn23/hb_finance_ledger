@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import type { MlForecastResult } from "@/server/ml/client";
 import type { FixedExpenseScheduleRow } from "@/lib/fixed-expense-schedule";
+import { buildSpendingSeries, projectSpendingMonthEnd } from "./spending-series";
 
 export interface OverviewSource {
   asOf: string;
@@ -35,86 +36,6 @@ const categoryTones = [
 ];
 const monthlyIncome = 3_110_000;
 const monthlySavingTarget = 1_000_000;
-
-function cumulative(points: Array<{ day: number; amount: number }>) {
-  let total = 0;
-  return points
-    .sort((a, b) => a.day - b.day)
-    .map((point) => {
-      total += point.amount;
-      return { day: point.day, amount: total };
-    });
-}
-
-function projectMonthEnd(current: number, lastDay: number, monthDays = 31) {
-  if (lastDay <= 0) return 0;
-  return Math.round((current / lastDay) * monthDays);
-}
-
-function buildSpending(
-  dailyExpenses: Array<{ day: number; amount: number }>,
-  baseline: Array<{ day: number; amount: number }>,
-  mlForecast?: MlForecastResult | null,
-): SpendingPoint[] {
-  const actual = cumulative(dailyExpenses);
-  const baselineByDay = new Map(cumulative(baseline).map((point) => [point.day, point.amount]));
-  const last = actual.at(-1);
-  const lastDay = last?.day ?? 0;
-
-  if (mlForecast) {
-    const actualByDay = new Map(actual.map((point) => [point.day, point.amount]));
-    const mlByDay = new Map(mlForecast.series.map((point) => [point.day, point.projected]));
-    const actualToday = last?.amount ?? null;
-    const mlToday = lastDay > 0 ? mlByDay.get(lastDay) ?? null : null;
-
-    return mlForecast.series.map((point) => ({
-      day: point.day,
-      actual: actualByDay.get(point.day) ?? null,
-      actualProjection: actualToday !== null && mlToday !== null && point.projected !== null && point.day >= lastDay
-        ? Math.round(actualToday + (point.projected - mlToday))
-        : null,
-      projected: point.projected,
-      baseline: baselineByDay.get(point.day) ?? null,
-      ai: point.ai,
-      upper: point.upper,
-      lower: point.lower,
-    }));
-  }
-
-  const projectedFinal = projectMonthEnd(last?.amount ?? 0, lastDay);
-  const projected: SpendingPoint[] = [];
-
-  for (let day = Math.max(lastDay, 1); day <= 31; day += day === lastDay ? 3 : 3) {
-    const ratio = day / 31;
-    const amount = Math.round(projectedFinal * ratio);
-    projected.push({
-      day,
-      actual: day <= lastDay ? actual.find((point) => point.day === day)?.amount ?? null : null,
-      actualProjection: null,
-      projected: amount,
-      baseline: baselineByDay.get(day) ?? null,
-      upper: Math.round(amount * 1.07),
-      lower: Math.round(amount * 0.93),
-    });
-  }
-
-  const byDay = new Map<number, SpendingPoint>();
-  actual.forEach((point) => {
-    byDay.set(point.day, {
-      day: point.day,
-      actual: point.amount,
-      actualProjection: null,
-      projected: null,
-      baseline: baselineByDay.get(point.day) ?? null,
-      upper: null,
-      lower: null,
-    });
-  });
-  projected.forEach((point) => {
-    byDay.set(point.day, { ...byDay.get(point.day), ...point });
-  });
-  return [...byDay.values()].sort((a, b) => a.day - b.day);
-}
 
 function buildCategories(categories: OverviewSource["categories"]): CategorySlice[] {
   const total = categories.reduce((sum, category) => sum + category.amount, 0);
@@ -151,7 +72,7 @@ function buildSummary(
   const netWorth = source.assetTotal - source.liabilityTotal;
   const currentSpend = source.dailyExpenses.reduce((sum, point) => sum + point.amount, 0);
   const lastDay = Math.max(1, ...source.dailyExpenses.map((point) => point.day));
-  const fallbackMonthTotal = mlForecast?.projectedFinal ?? projectMonthEnd(currentSpend, lastDay);
+  const fallbackMonthTotal = mlForecast?.projectedFinal ?? projectSpendingMonthEnd(currentSpend, lastDay);
   const projectedActualMonthTotal = actualProjectionFinal(spending) ?? fallbackMonthTotal;
   const reservedFixedTotal = calculateReservedFixedTotal(fixedExpenseSchedule);
   const variableSpendPool = monthlyIncome - monthlySavingTarget - reservedFixedTotal;
@@ -226,7 +147,7 @@ export function buildOverviewViewModel(
   fixedExpenseSchedule: FixedExpenseScheduleRow[] = [],
 ): OverviewViewModel {
   const netWorth = source.assetTotal - source.liabilityTotal;
-  const spending = buildSpending(source.dailyExpenses, source.baseline, mlForecast);
+  const spending = buildSpendingSeries(source.dailyExpenses, source.baseline, mlForecast);
 
   return {
     asOf: source.asOf,

@@ -3,18 +3,21 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { buildSpendingSeries } from "./spending-series.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 test("overview spending chart exposes actual-adjusted ML projection", () => {
   const modelSource = readFileSync(resolve(__dirname, "model.ts"), "utf8");
+  const spendingSource = readFileSync(resolve(__dirname, "spending-series.ts"), "utf8");
   const typeSource = readFileSync(resolve(__dirname, "types.ts"), "utf8");
   const chartSource = readFileSync(resolve(__dirname, "components/spending-chart.tsx"), "utf8");
   const tooltipSource = readFileSync(resolve(__dirname, "../../components/charts/forecast-tooltip.tsx"), "utf8");
 
   assert.match(typeSource, /actualProjection: number \| null/);
-  assert.match(modelSource, /actualProjection/);
-  assert.match(modelSource, /actualToday \+ \(point\.projected - mlToday\)/);
+  assert.match(modelSource, /buildSpendingSeries/);
+  assert.match(spendingSource, /actualProjection/);
+  assert.match(spendingSource, /actualAtObservedDay \+ \(point\.projected - mlAtObservedDay\)/);
   assert.match(chartSource, /dataKey="actualProjection"/);
   assert.match(chartSource, /실지출 예상/);
   assert.match(tooltipSource, /현재 실제 지출에 ML 잔여 예측을 더한 값/);
@@ -50,4 +53,64 @@ test("overview repository exposes monthly expense category totals for resource r
   assert.match(repositorySource, /getCurrentExpenseByCategory/);
   assert.match(repositorySource, /coalesce\(a\.category, 'normal'\) as category/);
   assert.match(repositorySource, /getCurrentExpenseByCategory\(\)/);
+});
+
+test("overview spending series carries actual forward through no-spend observed days", () => {
+  const forecast = {
+    source: "ml" as const,
+    today: "2026-05-16",
+    projectedFinal: 3_100_000,
+    lowerFinal: null,
+    upperFinal: null,
+    series: Array.from({ length: 31 }, (_, index) => {
+      const day = index + 1;
+      return {
+        day,
+        ai: null,
+        projected: day * 100_000,
+        upper: day * 110_000,
+        lower: day * 90_000,
+      };
+    }),
+  };
+
+  const points = buildSpendingSeries(
+    [{ day: 15, amount: 1_180_343 }],
+    [],
+    forecast,
+  );
+
+  assert.equal(points.find((point) => point.day === 15)?.actual, 1_180_343);
+  assert.equal(points.find((point) => point.day === 16)?.actual, 1_180_343);
+  assert.equal(points.find((point) => point.day === 17)?.actual, null);
+});
+
+test("overview actual projection starts at observed day with actual-adjusted ML remainder", () => {
+  const forecast = {
+    source: "ml" as const,
+    today: "2026-05-16",
+    projectedFinal: 3_100_000,
+    lowerFinal: null,
+    upperFinal: null,
+    series: Array.from({ length: 31 }, (_, index) => {
+      const day = index + 1;
+      return {
+        day,
+        ai: null,
+        projected: day * 100_000,
+        upper: day * 110_000,
+        lower: day * 90_000,
+      };
+    }),
+  };
+
+  const points = buildSpendingSeries(
+    [{ day: 15, amount: 1_180_343 }],
+    [],
+    forecast,
+  );
+
+  assert.equal(points.find((point) => point.day === 15)?.actualProjection, null);
+  assert.equal(points.find((point) => point.day === 16)?.actualProjection, 1_180_343);
+  assert.equal(points.find((point) => point.day === 17)?.actualProjection, 1_280_343);
 });
