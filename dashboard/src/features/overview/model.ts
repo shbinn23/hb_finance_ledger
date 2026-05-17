@@ -9,8 +9,9 @@ import type {
   TransactionRow,
 } from "./types";
 import type { MlForecastResult } from "@/server/ml/client";
-import type { FixedExpenseScheduleRow } from "@/lib/fixed-expense-schedule";
-import { buildSpendingSeries, projectSpendingMonthEnd } from "./spending-series";
+import type { FixedExpenseScheduleRow } from "@/lib/financial-analysis/fixed-expense-schedule";
+import { calculateAvailableResource, FINANCIAL_PLAN } from "@/lib/financial-analysis/resource-reservation";
+import { buildSpendingSeries, projectSpendingMonthEnd } from "@/lib/financial-analysis/spending-series";
 
 export interface OverviewSource {
   asOf: string;
@@ -34,8 +35,6 @@ const categoryTones = [
   "var(--green)",
   "var(--ink-muted)",
 ];
-const monthlyIncome = 3_110_000;
-const monthlySavingTarget = 1_000_000;
 
 function buildCategories(categories: OverviewSource["categories"]): CategorySlice[] {
   const total = categories.reduce((sum, category) => sum + category.amount, 0);
@@ -51,16 +50,22 @@ function actualProjectionFinal(spending: SpendingPoint[]) {
   return spending.findLast((point) => point.actualProjection !== null)?.actualProjection ?? null;
 }
 
-function calculateReservedFixedTotal(schedule: FixedExpenseScheduleRow[]) {
-  return schedule.reduce((sum, row) => (
-    sum + (row.currentAmount > 0 ? row.currentAmount : row.expectedAmount)
-  ), 0);
-}
-
 function calculateCurrentVariableSpend(currentExpenseByCategory: OverviewSource["currentExpenseByCategory"]) {
   return currentExpenseByCategory
     .filter((row) => row.category === "floating" || row.category === "normal")
     .reduce((sum, row) => sum + row.amount, 0);
+}
+
+function summarizeFixedReservation(schedule: FixedExpenseScheduleRow[]) {
+  return schedule.reduce((summary, row) => {
+    if (row.currentAmount > 0) {
+      summary.currentFixedAmount += row.currentAmount;
+    } else {
+      summary.remainingFixedScheduledAmount += row.expectedAmount;
+    }
+
+    return summary;
+  }, { currentFixedAmount: 0, remainingFixedScheduledAmount: 0 });
 }
 
 function buildSummary(
@@ -74,10 +79,15 @@ function buildSummary(
   const lastDay = Math.max(1, ...source.dailyExpenses.map((point) => point.day));
   const fallbackMonthTotal = mlForecast?.projectedFinal ?? projectSpendingMonthEnd(currentSpend, lastDay);
   const projectedActualMonthTotal = actualProjectionFinal(spending) ?? fallbackMonthTotal;
-  const reservedFixedTotal = calculateReservedFixedTotal(fixedExpenseSchedule);
-  const variableSpendPool = monthlyIncome - monthlySavingTarget - reservedFixedTotal;
   const currentVariableSpend = calculateCurrentVariableSpend(source.currentExpenseByCategory);
-  const availableResource = variableSpendPool - currentVariableSpend;
+  const fixedReservation = summarizeFixedReservation(fixedExpenseSchedule);
+  const resource = calculateAvailableResource({
+    monthlyIncome: FINANCIAL_PLAN.monthlyIncome,
+    monthlySavingTarget: FINANCIAL_PLAN.monthlySavingTarget,
+    currentFixedAmount: fixedReservation.currentFixedAmount,
+    remainingFixedScheduledAmount: fixedReservation.remainingFixedScheduledAmount,
+    currentVariableSpend,
+  });
 
   return [
     {
@@ -104,11 +114,11 @@ function buildSummary(
     {
       id: "available-resource",
       label: "가용 리소스",
-      value: won(availableResource),
-      detail: availableResource >= 0
-        ? `월말까지 변동지출 여유 ${won(availableResource)}`
-        : `변동지출 리소스 ${won(Math.abs(availableResource))} 초과`,
-      tone: availableResource < 0 ? "over" : "stable",
+      value: won(resource.availableResource),
+      detail: resource.availableResource >= 0
+        ? `월말까지 변동지출 여유 ${won(resource.availableResource)}`
+        : `변동지출 리소스 ${won(resource.overrunAmount)} 초과`,
+      tone: resource.isOverrun ? "over" : "stable",
     },
     {
       id: "sync",

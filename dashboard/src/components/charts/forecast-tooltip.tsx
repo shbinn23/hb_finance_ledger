@@ -50,14 +50,14 @@ export function ForecastTooltip({
   if (!point) return null;
 
   const hasRange = hasMoney(point.lower) && hasMoney(point.upper);
-  const hasActualProjection = hasMoney(point.actualProjection);
+  const showActualProjection = hasMoney(point.actualProjection) && point.actual === null;
 
   return (
     <div className="chart-tooltip">
       <p className="chart-tooltip-label">{label}일</p>
       <div className="chart-tooltip-list">
         <TooltipRow label="현재" value={point.actual} />
-        <TooltipRow label="실지출 예상" value={point.actualProjection} />
+        {showActualProjection ? <TooltipRow label="실지출 예상" value={point.actualProjection} /> : null}
         <TooltipRow label="ML 예상" value={point.projected} />
         {hasRange ? (
           <div className="chart-tooltip-row">
@@ -67,7 +67,7 @@ export function ForecastTooltip({
         ) : null}
         <TooltipRow label={referenceLabel} value={point[referenceKey]} />
       </div>
-      {hasActualProjection ? (
+      {showActualProjection ? (
         <p className="chart-tooltip-note">현재 실제 지출에 ML 잔여 예측을 더한 값</p>
       ) : null}
     </div>

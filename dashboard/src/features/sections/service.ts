@@ -13,7 +13,8 @@ import {
 } from "@/server/whooing/analytics-repository";
 import { getOverviewViewModel } from "@/features/overview/service";
 import { won, wonCompact } from "@/lib/format";
-import { buildFixedExpenseSchedule, referenceDayForMonth } from "@/lib/fixed-expense-schedule";
+import { buildFixedExpenseSchedule, referenceDayForMonth } from "@/lib/financial-analysis/fixed-expense-schedule";
+import { calculateAvailableResource, FINANCIAL_PLAN } from "@/lib/financial-analysis/resource-reservation";
 import { buildPeriodOptions, resolvePeriod, type PeriodQuery } from "@/lib/period-filter";
 import type {
   RightInsightPanelCard,
@@ -62,8 +63,6 @@ const sectionMeta: Record<SectionKey, SectionViewModel["header"]> = {
     badge: "반복 패턴",
   },
 };
-const monthlyIncome = 3_110_000;
-const monthlySavingTarget = 1_000_000;
 const periodFilterKeys = new Set<SectionKey>(["ledger", "trend", "budget", "analysis", "habits"]);
 
 function average(values: number[]) {
@@ -178,10 +177,16 @@ function noSpendDayCount(model: Omit<SectionViewModel, "metrics" | "insights" | 
   return Math.max(0, periodDayCount(model) - expenseDays.size);
 }
 
-function reservedFixedTotal(schedule: SectionViewModel["fixedExpenseSchedule"]) {
-  return schedule.reduce((sum, row) => (
-    sum + (row.currentAmount > 0 ? row.currentAmount : row.expectedAmount)
-  ), 0);
+function fixedReservation(schedule: SectionViewModel["fixedExpenseSchedule"]) {
+  return schedule.reduce((summary, row) => {
+    if (row.currentAmount > 0) {
+      summary.currentFixedAmount += row.currentAmount;
+    } else {
+      summary.remainingFixedScheduledAmount += row.expectedAmount;
+    }
+
+    return summary;
+  }, { currentFixedAmount: 0, remainingFixedScheduledAmount: 0 });
 }
 
 function currentVariableSpend(categories: SectionViewModel["categories"]) {
@@ -191,7 +196,14 @@ function currentVariableSpend(categories: SectionViewModel["categories"]) {
 }
 
 function availableResource(model: Omit<SectionViewModel, "metrics" | "insights" | "rightInsightPanels">) {
-  return monthlyIncome - monthlySavingTarget - reservedFixedTotal(model.fixedExpenseSchedule) - currentVariableSpend(model.categories);
+  const fixed = fixedReservation(model.fixedExpenseSchedule);
+  return calculateAvailableResource({
+    monthlyIncome: FINANCIAL_PLAN.monthlyIncome,
+    monthlySavingTarget: FINANCIAL_PLAN.monthlySavingTarget,
+    currentFixedAmount: fixed.currentFixedAmount,
+    remainingFixedScheduledAmount: fixed.remainingFixedScheduledAmount,
+    currentVariableSpend: currentVariableSpend(model.categories),
+  }).availableResource;
 }
 
 function observationSignalCount(categories: SectionViewModel["categories"]) {
@@ -482,7 +494,12 @@ function budgetPanels(model: Omit<SectionViewModel, "metrics" | "insights" | "ri
   const processed = model.fixedExpenseSchedule.filter((row) => row.status === "processed").length;
   const fixedTotal = model.fixedExpenseSchedule.length;
   const variableSpend = currentVariableSpend(model.categories);
-  const reservedFixed = reservedFixedTotal(model.fixedExpenseSchedule);
+  const reservedFixed = calculateAvailableResource({
+    monthlyIncome: FINANCIAL_PLAN.monthlyIncome,
+    monthlySavingTarget: FINANCIAL_PLAN.monthlySavingTarget,
+    ...fixedReservation(model.fixedExpenseSchedule),
+    currentVariableSpend: variableSpend,
+  }).reservedFixedTotal;
   const resource = availableResource(model);
 
   return [

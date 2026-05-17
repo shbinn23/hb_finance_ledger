@@ -1,7 +1,10 @@
 import { query } from "@/lib/db/postgres";
 import { getAccountDisplayName } from "@/lib/account-display-name";
 import { formatDisplayDateTime } from "@/lib/format";
-import type { FixedExpenseScheduleSourceRow } from "@/lib/fixed-expense-schedule";
+import {
+  displayFixedSchedulePolicy,
+  type FixedExpenseScheduleSourceRow,
+} from "@/lib/financial-analysis/fixed-expense-schedule";
 import type { ResolvedPeriod } from "@/lib/period-filter";
 
 export type EntryKind = "expense" | "income" | "transfer" | "card-payment" | "other";
@@ -195,6 +198,7 @@ interface FixedExpenseScheduleDbRow {
 }
 
 const sectionId = process.env.WHOOING_SECTION_ID ?? "s152045";
+const fixedSchedulePolicy = displayFixedSchedulePolicy;
 
 function money(value: string | number | null | undefined) {
   return Math.round(Number(value ?? 0));
@@ -915,7 +919,7 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
         and a.category = 'steady'
         and a.item_type = 'account'
         and to_date(floor(e.entry_date)::int::text, 'YYYYMMDD')
-          >= to_date((m.ym * 100 + 1)::text, 'YYYYMMDD') - interval '5 months'
+          >= to_date((m.ym * 100 + 1)::text, 'YYYYMMDD') - ($3::int * interval '1 month')
         and (floor(e.entry_date)::int / 100) <= m.ym
     ),
     fixed_monthly as (
@@ -976,10 +980,15 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
       processed_day
     from fixed_rollup
     where current_amount > 0
-       or historical_months >= 2
+       or historical_months >= $4
     order by coalesce(due_day, processed_day, 31), item_name
     `,
-    [sectionId, monthNumber],
+    [
+      sectionId,
+      monthNumber,
+      fixedSchedulePolicy.lookbackMonths,
+      fixedSchedulePolicy.minHistoricalMonths,
+    ],
   );
 
   const targetMonth = result.rows[0]?.target_month ?? monthNumber?.toString() ?? "";

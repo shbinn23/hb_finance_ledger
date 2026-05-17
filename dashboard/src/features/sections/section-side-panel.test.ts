@@ -22,6 +22,10 @@ test("section pages use page-specific side insight panels", () => {
   assert.match(typeSource, /rightInsightPanels: RightInsightPanelCard\[\]/);
   assert.match(serviceSource, /buildRightInsightPanels/);
   assert.match(panelSource, /model\.rightInsightPanels\.map/);
+  assert.match(panelSource, /rightInsightPanels\.length === 0/);
+  assert.match(panelSource, /표시할 운영 인사이트가 없습니다/);
+  assert.match(panelSource, /panel\.visuals\.length > 0/);
+  assert.match(panelSource, /이 카드에 표시할 세부 내용이 없습니다/);
   assert.doesNotMatch(panelSource, /switch \\(model\\.key\\)/);
   assert.doesNotMatch(panelSource, /case "ledger"/);
   assert.match(panelSource, /mini-bullet/);

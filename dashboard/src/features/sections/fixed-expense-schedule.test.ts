@@ -4,7 +4,12 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildFixedExpenseSchedule, referenceDayForMonth } from "../../lib/fixed-expense-schedule.ts";
+import {
+  buildFixedExpenseSchedule,
+  displayFixedSchedulePolicy,
+  referenceDayForMonth,
+  strictFixedCandidatePolicy,
+} from "../../lib/financial-analysis/fixed-expense-schedule.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -105,4 +110,44 @@ test("fixed expense schedule exposes payment account for the table", () => {
   assert.match(repositorySource, /coalesce\(current_payment_account_name, historical_payment_account_name/);
   assert.match(sectionPageSource, /<th>결제수단<\/th>/);
   assert.match(sectionPageSource, /row\.paymentAccountName/);
+});
+
+test("fixed expense policies document strict ML and display schedule differences", () => {
+  assert.equal(strictFixedCandidatePolicy.name, "strictFixedCandidatePolicy");
+  assert.equal(strictFixedCandidatePolicy.purpose, "ml_fixed_profile");
+  assert.equal(strictFixedCandidatePolicy.lookbackMonths, 12);
+  assert.equal(strictFixedCandidatePolicy.minTransactionCount, 3);
+  assert.equal(strictFixedCandidatePolicy.minMonthsSeen, 3);
+  assert.equal(strictFixedCandidatePolicy.maxDaySpread, 7);
+  assert.equal(strictFixedCandidatePolicy.dueDayStrategy, "median_day");
+  assert.equal(strictFixedCandidatePolicy.amountStrategy, "average_amount");
+  assert.equal(strictFixedCandidatePolicy.activeRule, "strict_recurring_candidate");
+
+  assert.equal(displayFixedSchedulePolicy.name, "displayFixedSchedulePolicy");
+  assert.equal(displayFixedSchedulePolicy.purpose, "dashboard_schedule");
+  assert.equal(displayFixedSchedulePolicy.lookbackMonths, 5);
+  assert.equal(displayFixedSchedulePolicy.minHistoricalMonths, 2);
+  assert.equal(displayFixedSchedulePolicy.dueDayStrategy, "historical_median_day");
+  assert.equal(displayFixedSchedulePolicy.amountStrategy, "latest_historical_month_total");
+  assert.equal(displayFixedSchedulePolicy.activeRule, "current_amount_or_min_history");
+});
+
+test("fixed expense repositories refer to named policies for candidate thresholds", () => {
+  const analyticsSource = readFileSync(
+    resolve(__dirname, "../../server/whooing/analytics-repository.ts"),
+    "utf8",
+  );
+  const mlTaskSource = readFileSync(
+    resolve(__dirname, "../../server/whooing/ml-task-repository.ts"),
+    "utf8",
+  );
+
+  assert.match(analyticsSource, /displayFixedSchedulePolicy/);
+  assert.match(analyticsSource, /\$3::int \* interval '1 month'/);
+  assert.match(analyticsSource, /historical_months >= \$4/);
+  assert.match(mlTaskSource, /strictFixedCandidatePolicy/);
+  assert.match(mlTaskSource, /e\.money between \$3 and \$4/);
+  assert.match(mlTaskSource, /tx_count >= \$6/);
+  assert.match(mlTaskSource, /months_seen >= \$7/);
+  assert.match(mlTaskSource, /max_day - min_day <= \$8/);
 });

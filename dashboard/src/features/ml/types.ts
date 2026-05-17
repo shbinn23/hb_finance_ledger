@@ -1,4 +1,5 @@
 import type { RiskLevel } from "@/features/overview/types";
+import type { RightInsightPanelCard } from "@/features/sections/types";
 
 export interface MlMetric {
   label: string;
@@ -10,7 +11,9 @@ export interface MlMetric {
 export interface MlForecastPoint {
   day: number;
   actual: number | null;
+  actualProjection: number | null;
   projected: number | null;
+  baseline: number | null;
   ai: number | null;
   upper: number | null;
   lower: number | null;
@@ -48,4 +51,5 @@ export interface MlInsightsViewModel {
   forecast: MlForecastPoint[];
   anomalies: MlAnomalyRow[];
   status: MlStatusCard[];
+  rightInsightPanels: RightInsightPanelCard[];
 }

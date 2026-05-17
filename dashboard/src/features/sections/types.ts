@@ -11,7 +11,7 @@ import type {
   PeriodAggregateRow,
   WorkspaceContext,
 } from "@/server/whooing/analytics-repository";
-import type { FixedExpenseScheduleRow } from "@/lib/fixed-expense-schedule";
+import type { FixedExpenseScheduleRow } from "@/lib/financial-analysis/fixed-expense-schedule";
 import type { PeriodOptions, ResolvedPeriod } from "@/lib/period-filter";
 
 export type SectionKey = "ledger" | "trend" | "budget" | "assets" | "analysis" | "habits";

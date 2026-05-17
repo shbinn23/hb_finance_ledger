@@ -6,11 +6,12 @@ import type {
   RightInsightPanelCard,
   RightInsightTimelineRow,
   RightInsightVisual,
-  SectionViewModel,
 } from "../types";
 
 interface RightInsightPanelProps {
-  model: SectionViewModel;
+  model: {
+    rightInsightPanels: RightInsightPanelCard[];
+  };
 }
 
 function clampPercent(value: number) {
@@ -171,11 +172,13 @@ function RightInsightCard({ panel }: { panel: RightInsightPanelCard }) {
       </CardHeader>
       <CardContent className="side-panel-content">
         <div className="side-panel-stack">
-          {panel.visuals.map((visual, index) => (
+          {panel.visuals.length > 0 ? panel.visuals.map((visual, index) => (
             <div key={`${visual.type}-${index}`}>
               {renderVisual(visual)}
             </div>
-          ))}
+          )) : (
+            <p className="side-note">이 카드에 표시할 세부 내용이 없습니다.</p>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -183,6 +186,20 @@ function RightInsightCard({ panel }: { panel: RightInsightPanelCard }) {
 }
 
 export function RightInsightPanel({ model }: RightInsightPanelProps) {
+  if (model.rightInsightPanels.length === 0) {
+    return (
+      <Card className="side-panel-card">
+        <CardHeader className="side-panel-card-header">
+          <CardDescription className="side-panel-eyebrow">Signals</CardDescription>
+          <CardTitle className="side-panel-title">운영 인사이트</CardTitle>
+        </CardHeader>
+        <CardContent className="side-panel-content">
+          <p className="side-note">표시할 운영 인사이트가 없습니다.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <>
       {model.rightInsightPanels.map((panel) => (

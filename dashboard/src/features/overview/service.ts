@@ -1,7 +1,7 @@
 import { getWhooingOverviewSource } from "@/server/whooing/repository";
 import { getMlForecastForOverview } from "@/features/ml/service";
 import { getFixedExpenseSchedule } from "@/server/whooing/analytics-repository";
-import { buildFixedExpenseSchedule, referenceDayForMonth } from "@/lib/fixed-expense-schedule";
+import { buildFixedExpenseSchedule, referenceDayForMonth } from "@/lib/financial-analysis/fixed-expense-schedule";
 import { buildOverviewViewModel } from "./model";
 
 export async function getOverviewViewModel() {

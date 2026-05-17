@@ -1,4 +1,5 @@
 import { query } from "@/lib/db/postgres";
+import { strictFixedCandidatePolicy } from "@/lib/financial-analysis/fixed-expense-schedule";
 
 export interface MlSeriesPoint {
   ds: string;
@@ -50,6 +51,7 @@ interface AnomalyFeatureDbRow {
 }
 
 const sectionId = process.env.WHOOING_SECTION_ID ?? "s152045";
+const fixedProfilePolicy = strictFixedCandidatePolicy;
 
 function numberValue(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -123,8 +125,8 @@ export async function getWhooingForecastTaskSource(today = todayKst()): Promise<
           and e.l_account = 'expenses'
           and a.item_type = 'account'
           and a.category = 'steady'
-          and e.money between 1000 and 999999
-          and to_date(floor(e.entry_date)::int::text, 'YYYYMMDD') >= (to_date($2, 'YYYY-MM-DD') - interval '12 months')
+          and e.money between $3 and $4
+          and to_date(floor(e.entry_date)::int::text, 'YYYYMMDD') >= (to_date($2, 'YYYY-MM-DD') - ($5::int * interval '1 month'))
           and to_date(floor(e.entry_date)::int::text, 'YYYYMMDD') <= to_date($2, 'YYYY-MM-DD')
       ),
       learned_fixed as (
@@ -139,12 +141,21 @@ export async function getWhooingForecastTaskSource(today = todayKst()): Promise<
       )
       select due_day, avg_amount
       from learned_fixed
-      where tx_count >= 3
-        and months_seen >= 3
-        and max_day - min_day <= 7
+      where tx_count >= $6
+        and months_seen >= $7
+        and max_day - min_day <= $8
       order by due_day
       `,
-      [sectionId, today],
+      [
+        sectionId,
+        today,
+        fixedProfilePolicy.minAmount,
+        fixedProfilePolicy.maxAmount,
+        fixedProfilePolicy.lookbackMonths,
+        fixedProfilePolicy.minTransactionCount,
+        fixedProfilePolicy.minMonthsSeen,
+        fixedProfilePolicy.maxDaySpread,
+      ],
     ),
   ]);
 

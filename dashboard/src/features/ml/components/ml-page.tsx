@@ -1,7 +1,8 @@
-import { AlertOctagon, BrainCircuit, CheckCircle2, RadioTower } from "lucide-react";
+import { AlertOctagon, BrainCircuit, CheckCircle2 } from "lucide-react";
 import { MetricCard } from "@/components/metrics/metric-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { RightInsightPanel } from "@/features/sections/components/section-side-panel";
 import { MlForecastChart } from "./ml-charts";
 import type { MlInsightsViewModel } from "../types";
 
@@ -55,8 +56,9 @@ export function MlPage({ model }: MlPageProps) {
                 </div>
                 <div className="legend">
                   <span><i className="legend-actual" /> 현재</span>
+                  <span><i className="legend-actual-projection" /> 실지출 예상</span>
                   <span><i className="legend-projected" /> ML 예상</span>
-                  <span><i className="legend-baseline" /> ML 원본</span>
+                  <span><i className="legend-baseline" /> 최근 기준</span>
                 </div>
               </div>
             </CardHeader>
@@ -108,46 +110,7 @@ export function MlPage({ model }: MlPageProps) {
         </div>
 
         <aside className="dashboard-side">
-          <Card className="panel-dark ml-status-panel">
-            <CardHeader>
-              <div className="section-heading card-section-heading compact-heading">
-                <div>
-                  <CardDescription className="eyebrow on-dark">Model Boundary</CardDescription>
-                  <CardTitle>실행 상태</CardTitle>
-                </div>
-                <RadioTower size={18} />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="ml-status-list">
-                {model.status.map((item) => (
-                  <div key={item.label} className="ml-status-row">
-                    <p>{item.label}</p>
-                    <strong>{item.value}</strong>
-                    <span>{item.detail}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="section-heading card-section-heading compact-heading">
-                <div>
-                  <CardDescription>Model Coach</CardDescription>
-                  <CardTitle>판단 요약</CardTitle>
-                </div>
-                <BrainCircuit size={18} />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className={`ml-side-coach ml-side-coach-${model.coach.tone}`}>
-                <strong>{model.coach.title}</strong>
-                <p>{model.coach.body}</p>
-              </div>
-            </CardContent>
-          </Card>
+          <RightInsightPanel model={model} />
         </aside>
       </div>
     </>

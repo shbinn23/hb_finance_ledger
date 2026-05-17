@@ -46,17 +46,17 @@ export function MlForecastChart({ data }: MlForecastChartProps) {
         />
         <Tooltip
           cursor={{ stroke: "var(--primary)", strokeOpacity: 0.18 }}
-          content={<ForecastTooltip referenceKey="ai" referenceLabel="ML 원본" />}
+          content={<ForecastTooltip />}
         />
         <Area dataKey="upper" name="예상 상한" stroke="none" fill="url(#mlBand)" dot={false} />
         <Area dataKey="lower" name="예상 하한" stroke="none" fill="var(--canvas)" dot={false} />
         <Line
           type="monotone"
-          dataKey="ai"
-          name="ML 원본"
-          stroke="var(--primary)"
-          strokeDasharray="4 4"
-          strokeWidth={2.1}
+          dataKey="baseline"
+          name="최근 기준"
+          stroke="var(--ink-muted)"
+          strokeDasharray="3 6"
+          strokeWidth={1.8}
           dot={false}
         />
         <Line
@@ -65,6 +65,16 @@ export function MlForecastChart({ data }: MlForecastChartProps) {
           name="ML 예상"
           stroke="var(--brand-dark)"
           strokeWidth={2.4}
+          strokeDasharray="6 5"
+          dot={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="actualProjection"
+          name="실지출 예상"
+          stroke="var(--ruby)"
+          strokeWidth={2.5}
+          strokeDasharray="5 5"
           dot={false}
         />
         <Line
