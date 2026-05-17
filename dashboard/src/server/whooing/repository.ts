@@ -1,4 +1,5 @@
 import { query } from "@/lib/db/postgres";
+import { getAccountDisplayName } from "@/lib/account-display-name";
 import { formatDisplayDateTime } from "@/lib/format";
 import type { AccountBalance, TransactionRow } from "@/features/overview/types";
 import type { OverviewSource } from "@/features/overview/model";
@@ -30,6 +31,8 @@ interface ExpenseCategoryRow {
 }
 
 interface AccountRow {
+  account_id: string;
+  account_type: "assets" | "liabilities";
   name: string;
   type: "asset" | "liability";
   amount: string;
@@ -40,6 +43,8 @@ interface TransactionDbRow {
   id: string;
   date_label: string;
   account: string;
+  account_id: string;
+  account_type: string;
   category: string;
   merchant: string;
   amount: string;
@@ -239,6 +244,8 @@ async function getKeyAccounts(): Promise<AccountBalance[]> {
     `
     with account_balances as (
       select
+        a.account_id,
+        a.account_type,
         a.title as name,
         case when a.account_type = 'assets' then 'asset' else 'liability' end as type,
         a.category,
@@ -261,9 +268,11 @@ async function getKeyAccounts(): Promise<AccountBalance[]> {
       where a.section_id = $1
         and a.item_type = 'account'
         and a.account_type in ('assets', 'liabilities')
-      group by a.title, a.account_type, a.category
+      group by a.account_id, a.account_type, a.title, a.category
     )
     select name,
+           account_id,
+           account_type,
            type,
            amount::text,
            coalesce(category, 'normal') as detail
@@ -275,7 +284,7 @@ async function getKeyAccounts(): Promise<AccountBalance[]> {
     [sectionId],
   );
   return result.rows.map((row) => ({
-    name: row.name,
+    name: getAccountDisplayName(row.account_type, row.account_id, row.name),
     type: row.type,
     amount: Math.abs(numberValue(row.amount)),
     detail: row.detail,
@@ -288,6 +297,8 @@ async function getRecentTransactions(): Promise<TransactionRow[]> {
     select e.entry_id::text as id,
            to_char(to_date(floor(e.entry_date)::int::text, 'YYYYMMDD'), 'YYYY.MM.DD') as date_label,
            coalesce(pay.title, e.r_account_id) as account,
+           e.r_account_id as account_id,
+           e.r_account as account_type,
            coalesce(exp.title, e.l_account_id) as category,
            e.item as merchant,
            e.money::text as amount
@@ -308,7 +319,7 @@ async function getRecentTransactions(): Promise<TransactionRow[]> {
   return result.rows.map((row) => ({
     id: row.id,
     date: row.date_label,
-    account: row.account,
+    account: getAccountDisplayName(row.account_type, row.account_id, row.account),
     category: row.category,
     merchant: row.merchant || "후잉 거래",
     amount: numberValue(row.amount),

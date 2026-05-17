@@ -1,4 +1,5 @@
 import { query } from "@/lib/db/postgres";
+import { getAccountDisplayName } from "@/lib/account-display-name";
 import { formatDisplayDateTime } from "@/lib/format";
 import type { FixedExpenseScheduleSourceRow } from "@/lib/fixed-expense-schedule";
 import type { ResolvedPeriod } from "@/lib/period-filter";
@@ -125,6 +126,7 @@ interface CategoryDbRow {
 
 interface AccountDbRow {
   id: string;
+  account_type: "assets" | "liabilities";
   name: string;
   kind: AccountKind;
   category: string;
@@ -139,6 +141,8 @@ interface LedgerDbRow {
   kind: EntryKind;
   left_account: string;
   right_account: string;
+  left_account_id: string;
+  right_account_id: string;
   left_type: string;
   right_type: string;
   item: string | null;
@@ -151,6 +155,8 @@ interface LedgerMonthDbRow {
 }
 
 interface PaymentMixDbRow {
+  account_id: string;
+  account_type: string;
   name: string;
   category: string;
   amount: string;
@@ -181,6 +187,7 @@ interface FixedExpenseScheduleDbRow {
   account_name: string;
   item_name: string;
   payment_account_name: string | null;
+  payment_account_key: string | null;
   expected_amount: string | null;
   current_amount: string;
   due_day: string | null;
@@ -220,6 +227,23 @@ function formatLedgerMonthValue(yyyymm: string) {
 function toMonthNumber(month: string | null | undefined) {
   if (!month || !/^\d{4}-\d{2}$/.test(month)) return null;
   return Number(month.replace("-", ""));
+}
+
+function displayAccountName(accountType: string, accountId: string, sourceTitle: string) {
+  return getAccountDisplayName(accountType, accountId, sourceTitle);
+}
+
+function displayEncodedAccountNames(value: string | null | undefined) {
+  if (!value) return null;
+  return value
+    .split(", ")
+    .map((chunk) => {
+      const [accountType, accountId, ...titleParts] = chunk.split(":");
+      const sourceTitle = titleParts.join(":");
+      if (!accountType || !accountId || !sourceTitle) return chunk;
+      return displayAccountName(accountType, accountId, sourceTitle);
+    })
+    .join(", ");
 }
 
 export async function getWorkspaceContext(month?: string | null): Promise<WorkspaceContext> {
@@ -465,6 +489,7 @@ export async function getAccountAnalytics(): Promise<AccountAnalyticsRow[]> {
     with account_balances as (
       select
         a.account_id as id,
+        a.account_type,
         a.title as name,
         case when a.account_type = 'assets' then 'asset' else 'liability' end as kind,
         coalesce(a.category, 'normal') as category,
@@ -491,7 +516,7 @@ export async function getAccountAnalytics(): Promise<AccountAnalyticsRow[]> {
         and a.account_type in ('assets', 'liabilities')
       group by a.account_id, a.title, a.account_type, a.category, a.opt_pay_date, a.opt_pay_account_id
     )
-    select id, name, kind, category, amount::text, payment_day, payment_account_id
+    select id, account_type, name, kind, category, amount::text, payment_day, payment_account_id
     from account_balances
     where amount <> 0
     order by kind, abs(amount) desc
@@ -500,7 +525,7 @@ export async function getAccountAnalytics(): Promise<AccountAnalyticsRow[]> {
   );
   return result.rows.map((row) => ({
     id: row.id,
-    name: row.name,
+    name: displayAccountName(row.account_type, row.id, row.name),
     kind: row.kind,
     category: row.category,
     amount: money(row.amount),
@@ -547,6 +572,8 @@ export async function getLedgerRows({
            end as kind,
            coalesce(l.title, e.l_account_id) as left_account,
            coalesce(r.title, e.r_account_id) as right_account,
+           e.l_account_id as left_account_id,
+           e.r_account_id as right_account_id,
            e.l_account as left_type,
            e.r_account as right_type,
            e.item,
@@ -571,8 +598,8 @@ export async function getLedgerRows({
     id: row.id,
     date: row.date_label,
     kind: row.kind,
-    leftAccount: row.left_account,
-    rightAccount: row.right_account,
+    leftAccount: displayAccountName(row.left_type, row.left_account_id, row.left_account),
+    rightAccount: displayAccountName(row.right_type, row.right_account_id, row.right_account),
     leftType: row.left_type,
     rightType: row.right_type,
     item: row.item?.trim() || "후잉 거래",
@@ -585,7 +612,9 @@ export async function getPaymentMix(month?: string | null, period?: ResolvedPeri
   if (period && period.mode !== "month") {
     const result = await query<PaymentMixDbRow>(
       `
-      select coalesce(a.title, e.r_account_id) as name,
+      select e.r_account_id as account_id,
+             e.r_account as account_type,
+             coalesce(a.title, e.r_account_id) as name,
              coalesce(a.category, e.r_account) as category,
              sum(e.money)::text as amount,
              count(*)::text as count
@@ -597,14 +626,14 @@ export async function getPaymentMix(month?: string | null, period?: ResolvedPeri
         and e.l_account = 'expenses'
         and ($2::int is null or e.entry_date >= $2)
         and ($3::int is null or e.entry_date < $3)
-      group by 1, 2
+      group by 1, 2, 3, 4
       order by sum(e.money) desc
       limit 10
       `,
       [sectionId, period.startDate, period.endDate],
     );
     return result.rows.map((row) => ({
-      name: row.name,
+      name: displayAccountName(row.account_type, row.account_id, row.name),
       category: row.category,
       amount: money(row.amount),
       count: Number(row.count),
@@ -620,7 +649,9 @@ export async function getPaymentMix(month?: string | null, period?: ResolvedPeri
         (select (floor(max(entry_date))::int / 100) from whooing.entries where section_id = $1)
       ) as ym
     )
-    select coalesce(a.title, e.r_account_id) as name,
+    select e.r_account_id as account_id,
+           e.r_account as account_type,
+           coalesce(a.title, e.r_account_id) as name,
            coalesce(a.category, e.r_account) as category,
            sum(e.money)::text as amount,
            count(*)::text as count
@@ -632,14 +663,14 @@ export async function getPaymentMix(month?: string | null, period?: ResolvedPeri
     where e.section_id = $1
       and e.l_account = 'expenses'
       and (floor(e.entry_date)::int / 100) = m.ym
-    group by 1, 2
+    group by 1, 2, 3, 4
     order by sum(e.money) desc
     limit 10
     `,
     [sectionId, monthNumber],
   );
   return result.rows.map((row) => ({
-    name: row.name,
+    name: displayAccountName(row.account_type, row.account_id, row.name),
     category: row.category,
     amount: money(row.amount),
     count: Number(row.count),
@@ -866,6 +897,7 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
         a.title as account_name,
         coalesce(nullif(trim(e.item), ''), a.title) as item_name,
         coalesce(p.title, e.r_account_id, '미확인') as payment_account_name,
+        concat_ws(':', e.r_account, e.r_account_id, coalesce(p.title, e.r_account_id, '미확인')) as payment_account_key,
         (floor(e.entry_date)::int / 100) as ym,
         (floor(e.entry_date)::int % 100) as day,
         e.money
@@ -892,7 +924,8 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
         fe.item_name,
         fe.ym,
         sum(fe.money) as month_amount,
-        string_agg(distinct fe.payment_account_name, ', ' order by fe.payment_account_name) as payment_account_name
+        string_agg(distinct fe.payment_account_name, ', ' order by fe.payment_account_name) as payment_account_name,
+        string_agg(distinct fe.payment_account_key, ', ' order by fe.payment_account_key) as payment_account_key
       from fixed_entries fe
       group by fe.account_id, fe.item_name, fe.ym
     ),
@@ -901,7 +934,8 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
         fm.account_id,
         fm.item_name,
         fm.month_amount as expected_amount,
-        fm.payment_account_name as historical_payment_account_name
+        fm.payment_account_name as historical_payment_account_name,
+        fm.payment_account_key as historical_payment_account_key
       from fixed_monthly fm
       join target_month m on true
       where fm.ym < m.ym
@@ -916,7 +950,9 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
         max(fe.day) filter (where fe.ym = m.ym) as processed_day,
         lha.expected_amount,
         string_agg(distinct fe.payment_account_name, ', ' order by fe.payment_account_name) filter (where fe.ym = m.ym) as current_payment_account_name,
+        string_agg(distinct fe.payment_account_key, ', ' order by fe.payment_account_key) filter (where fe.ym = m.ym) as current_payment_account_key,
         lha.historical_payment_account_name,
+        lha.historical_payment_account_key,
         (percentile_cont(0.5) within group (order by fe.day) filter (where fe.ym < m.ym))::int as due_day,
         count(distinct fe.ym) filter (where fe.ym < m.ym) as historical_months,
         m.ym::text as target_month
@@ -925,7 +961,7 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
       left join latest_historical_amount lha
         on lha.account_id = fe.account_id
        and lha.item_name = fe.item_name
-      group by fe.account_id, fe.account_name, fe.item_name, lha.expected_amount, lha.historical_payment_account_name, m.ym
+      group by fe.account_id, fe.account_name, fe.item_name, lha.expected_amount, lha.historical_payment_account_name, lha.historical_payment_account_key, m.ym
     )
     select
       target_month,
@@ -933,6 +969,7 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
       account_name,
       item_name,
       coalesce(current_payment_account_name, historical_payment_account_name, '미확인') as payment_account_name,
+      coalesce(current_payment_account_key, historical_payment_account_key) as payment_account_key,
       expected_amount::text,
       current_amount::text,
       due_day::text,
@@ -952,7 +989,7 @@ export async function getFixedExpenseSchedule(month?: string | null): Promise<Fi
       id: row.id,
       accountName: row.account_name,
       itemName: row.item_name,
-      paymentAccountName: row.payment_account_name ?? "미확인",
+      paymentAccountName: displayEncodedAccountNames(row.payment_account_key) ?? row.payment_account_name ?? "미확인",
       expectedAmount: money(row.expected_amount),
       currentAmount: money(row.current_amount),
       dueDay: Number(row.due_day ?? row.processed_day ?? 1),

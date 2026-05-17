@@ -1,4 +1,5 @@
 import { query } from "@/lib/db/postgres";
+import { getAccountDisplayName } from "@/lib/account-display-name";
 import type { ResolvedPeriod } from "@/lib/period-filter";
 
 const sectionId = process.env.WHOOING_SECTION_ID ?? "s152045";
@@ -23,6 +24,7 @@ interface CashFlowDbRow {
 
 interface AssetDeltaDbRow {
   account_id: string;
+  account_type: string;
   title: string;
   inflow: string;
   outflow: string;
@@ -33,6 +35,7 @@ interface AssetDeltaDbRow {
 
 interface LiabilityDeltaDbRow {
   account_id: string;
+  account_type: string;
   title: string;
   liability_increase: string;
   liability_decrease: string;
@@ -194,6 +197,7 @@ export async function getAccountingAssetDeltaRows(period: ResolvedPeriod) {
     `
     select
       a.account_id,
+      a.account_type,
       a.title,
       sum(case when e.l_account = 'assets' and e.l_account_id = a.account_id then e.money else 0 end)::text as inflow,
       sum(case when e.r_account = 'assets' and e.r_account_id = a.account_id then e.money else 0 end)::text as outflow,
@@ -221,7 +225,7 @@ export async function getAccountingAssetDeltaRows(period: ResolvedPeriod) {
     where a.section_id = $1
       and a.account_type = 'assets'
       and a.item_type = 'account'
-    group by a.account_id, a.title
+    group by a.account_id, a.account_type, a.title
     having
       sum(case when e.l_account = 'assets' and e.l_account_id = a.account_id then e.money else 0 end) <> 0
       or sum(case when e.r_account = 'assets' and e.r_account_id = a.account_id then e.money else 0 end) <> 0
@@ -236,7 +240,7 @@ export async function getAccountingAssetDeltaRows(period: ResolvedPeriod) {
 
   return result.rows.map((row) => ({
     accountId: row.account_id,
-    title: row.title,
+    title: getAccountDisplayName(row.account_type, row.account_id, row.title),
     inflow: money(row.inflow),
     outflow: money(row.outflow),
     netDelta: money(row.net_delta),
@@ -250,6 +254,7 @@ export async function getAccountingLiabilityDeltaRows(period: ResolvedPeriod) {
     `
     select
       a.account_id,
+      a.account_type,
       a.title,
       sum(case when e.r_account = 'liabilities' and e.r_account_id = a.account_id then e.money else 0 end)::text as liability_increase,
       sum(case when e.l_account = 'liabilities' and e.l_account_id = a.account_id then e.money else 0 end)::text as liability_decrease,
@@ -277,7 +282,7 @@ export async function getAccountingLiabilityDeltaRows(period: ResolvedPeriod) {
     where a.section_id = $1
       and a.account_type = 'liabilities'
       and a.item_type = 'account'
-    group by a.account_id, a.title
+    group by a.account_id, a.account_type, a.title
     having
       sum(case when e.r_account = 'liabilities' and e.r_account_id = a.account_id then e.money else 0 end) <> 0
       or sum(case when e.l_account = 'liabilities' and e.l_account_id = a.account_id then e.money else 0 end) <> 0
@@ -292,7 +297,7 @@ export async function getAccountingLiabilityDeltaRows(period: ResolvedPeriod) {
 
   return result.rows.map((row) => ({
     accountId: row.account_id,
-    title: row.title,
+    title: getAccountDisplayName(row.account_type, row.account_id, row.title),
     liabilityIncrease: money(row.liability_increase),
     liabilityDecrease: money(row.liability_decrease),
     netDelta: money(row.net_delta),
@@ -377,9 +382,9 @@ export async function getAccountingDrillDownEntries(period: ResolvedPeriod) {
     flowKey: row.flow_key,
     lAccount: row.l_account,
     lAccountId: row.l_account_id,
-    lAccountTitle: row.l_account_title ?? row.l_account_id,
+    lAccountTitle: getAccountDisplayName(row.l_account, row.l_account_id, row.l_account_title ?? row.l_account_id),
     rAccount: row.r_account,
     rAccountId: row.r_account_id,
-    rAccountTitle: row.r_account_title ?? row.r_account_id,
+    rAccountTitle: getAccountDisplayName(row.r_account, row.r_account_id, row.r_account_title ?? row.r_account_id),
   }));
 }

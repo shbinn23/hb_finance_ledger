@@ -1,4 +1,5 @@
 import { query } from "@/lib/db/postgres";
+import { getAccountDisplayName } from "@/lib/account-display-name";
 
 export type WhooingLedgerAccountType = "assets" | "liabilities" | "expenses";
 
@@ -22,7 +23,7 @@ function toAccount(row: AccountDbRow): WhooingLedgerAccount {
   return {
     accountType: row.account_type,
     accountId: row.account_id,
-    title: row.title,
+    title: getAccountDisplayName(row.account_type, row.account_id, row.title),
   };
 }
 
