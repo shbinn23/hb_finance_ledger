@@ -1,6 +1,7 @@
 import { query } from "@/lib/db/postgres";
 import { getAccountDisplayName } from "@/lib/account-display-name";
 import { formatDisplayDateTime } from "@/lib/format";
+import { currentKstMonthValue } from "@/lib/kst-date";
 import type { AccountBalance, TransactionRow } from "@/features/overview/types";
 import type { OverviewSource } from "@/features/overview/model";
 
@@ -71,7 +72,7 @@ function formatMonth(yyyymm: string | null) {
   };
 }
 
-async function getSyncState() {
+async function getSyncState(targetMonth: number) {
   const result = await query<SyncRow>(
     `
     select count(*)::text as entry_count,
@@ -83,7 +84,7 @@ async function getSyncState() {
     [sectionId],
   );
   const row = result.rows[0];
-  const month = formatMonth(row?.latest_month ?? null);
+  const month = formatMonth(String(targetMonth));
   return {
     entryCount: Number(row?.entry_count ?? 0),
     ...month,
@@ -136,44 +137,34 @@ async function getBalanceSummary() {
   };
 }
 
-async function getDailyExpenses() {
+async function getDailyExpenses(targetMonth: number) {
   const result = await query<DailyRow>(
     `
-    with latest_month as (
-      select (floor(max(entry_date))::int / 100) as ym
-      from whooing.entries
-      where section_id = $1
-    )
     select (floor(e.entry_date)::int % 100) as day,
            sum(e.money)::text as amount
-    from whooing.entries e, latest_month m
+    from whooing.entries e
     where e.section_id = $1
       and e.l_account = 'expenses'
-      and (floor(e.entry_date)::int / 100) = m.ym
+      and (floor(e.entry_date)::int / 100) = $2
     group by 1
     order by 1
     `,
-    [sectionId],
+    [sectionId, targetMonth],
   );
   return result.rows.map((row) => ({ day: row.day, amount: numberValue(row.amount) }));
 }
 
-async function getBaselineExpenses() {
+async function getBaselineExpenses(targetMonth: number) {
   const result = await query<DailyRow>(
     `
-    with latest_month as (
-      select (floor(max(entry_date))::int / 100) as ym
-      from whooing.entries
-      where section_id = $1
-    ),
-    monthly_day as (
+    with monthly_day as (
       select (floor(e.entry_date)::int / 100) as ym,
              (floor(e.entry_date)::int % 100) as day,
              sum(e.money) as amount
-      from whooing.entries e, latest_month m
+      from whooing.entries e
       where e.section_id = $1
         and e.l_account = 'expenses'
-        and (floor(e.entry_date)::int / 100) < m.ym
+        and (floor(e.entry_date)::int / 100) < $2
       group by 1, 2
     )
     select day, avg(amount)::text as amount
@@ -181,45 +172,34 @@ async function getBaselineExpenses() {
     group by day
     order by day
     `,
-    [sectionId],
+    [sectionId, targetMonth],
   );
   return result.rows.map((row) => ({ day: row.day, amount: Math.round(numberValue(row.amount)) }));
 }
 
-async function getCategories() {
+async function getCategories(targetMonth: number) {
   const result = await query<CategoryRow>(
     `
-    with latest_month as (
-      select (floor(max(entry_date))::int / 100) as ym
-      from whooing.entries
-      where section_id = $1
-    )
     select a.title as name, sum(e.money)::text as amount
     from whooing.entries e
     join whooing.accounts a
       on a.section_id = e.section_id
      and a.account_id = e.l_account_id
-    join latest_month m on true
     where e.section_id = $1
       and e.l_account = 'expenses'
-      and (floor(e.entry_date)::int / 100) = m.ym
+      and (floor(e.entry_date)::int / 100) = $2
     group by a.title
     order by sum(e.money) desc
     limit 5
     `,
-    [sectionId],
+    [sectionId, targetMonth],
   );
   return result.rows.map((row) => ({ name: row.name, amount: numberValue(row.amount) }));
 }
 
-async function getCurrentExpenseByCategory() {
+async function getCurrentExpenseByCategory(targetMonth: number) {
   const result = await query<ExpenseCategoryRow>(
     `
-    with latest_month as (
-      select (floor(max(entry_date))::int / 100) as ym
-      from whooing.entries
-      where section_id = $1
-    )
     select coalesce(a.category, 'normal') as category,
            sum(e.money)::text as amount
     from whooing.entries e
@@ -227,14 +207,13 @@ async function getCurrentExpenseByCategory() {
       on a.section_id = e.section_id
      and a.account_id = e.l_account_id
      and a.account_type = e.l_account
-    join latest_month m on true
     where e.section_id = $1
       and e.l_account = 'expenses'
       and a.item_type = 'account'
-      and (floor(e.entry_date)::int / 100) = m.ym
+      and (floor(e.entry_date)::int / 100) = $2
     group by coalesce(a.category, 'normal')
     `,
-    [sectionId],
+    [sectionId, targetMonth],
   );
   return result.rows.map((row) => ({ category: row.category, amount: numberValue(row.amount) }));
 }
@@ -328,6 +307,7 @@ async function getRecentTransactions(): Promise<TransactionRow[]> {
 }
 
 export async function getWhooingOverviewSource(): Promise<OverviewSource> {
+  const targetMonth = Number(currentKstMonthValue().replace("-", ""));
   const [
     sync,
     balances,
@@ -338,12 +318,12 @@ export async function getWhooingOverviewSource(): Promise<OverviewSource> {
     accounts,
     transactions,
   ] = await Promise.all([
-    getSyncState(),
+    getSyncState(targetMonth),
     getBalanceSummary(),
-    getDailyExpenses(),
-    getBaselineExpenses(),
-    getCategories(),
-    getCurrentExpenseByCategory(),
+    getDailyExpenses(targetMonth),
+    getBaselineExpenses(targetMonth),
+    getCategories(targetMonth),
+    getCurrentExpenseByCategory(targetMonth),
     getKeyAccounts(),
     getRecentTransactions(),
   ]);

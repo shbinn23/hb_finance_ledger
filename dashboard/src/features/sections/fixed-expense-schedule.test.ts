@@ -64,6 +64,20 @@ test("referenceDayForMonth uses today for current month and month end for past m
   assert.equal(referenceDayForMonth("202604", now), 30);
 });
 
+test("referenceDayForMonth uses KST when container local time is still previous day", () => {
+  const originalTimezone = process.env.TZ;
+  process.env.TZ = "UTC";
+
+  try {
+    const kstMidnightFromUtc = new Date("2026-05-31T15:05:00Z");
+
+    assert.equal(referenceDayForMonth("202606", kstMidnightFromUtc), 1);
+    assert.equal(referenceDayForMonth("202605", kstMidnightFromUtc), 31);
+  } finally {
+    process.env.TZ = originalTimezone;
+  }
+});
+
 test("fixed expense schedule query uses median due day and latest historical month amount", () => {
   const repositorySource = readFileSync(
     resolve(__dirname, "../../server/whooing/analytics-repository.ts"),

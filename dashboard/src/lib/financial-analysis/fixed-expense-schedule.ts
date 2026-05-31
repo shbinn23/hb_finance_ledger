@@ -1,3 +1,5 @@
+import { currentKstDay, todayKstDateParts } from "../kst-date.ts";
+
 export type FixedExpenseStatus = "processed" | "scheduled" | "overdue";
 
 export type FixedExpensePolicyPurpose = "ml_fixed_profile" | "dashboard_schedule";
@@ -109,15 +111,16 @@ export function buildFixedExpenseSchedule(
 }
 
 export function referenceDayForMonth(targetMonth: string, now = new Date()): number {
-  if (!/^\d{6}$/.test(targetMonth)) return now.getDate();
+  if (!/^\d{6}$/.test(targetMonth)) return currentKstDay(now);
 
   const year = Number(targetMonth.slice(0, 4));
   const monthIndex = Number(targetMonth.slice(4, 6)) - 1;
-  const currentYear = now.getFullYear();
-  const currentMonthIndex = now.getMonth();
+  const kstToday = todayKstDateParts(now);
+  const currentYear = Number(kstToday.year);
+  const currentMonthIndex = Number(kstToday.month) - 1;
 
   if (year === currentYear && monthIndex === currentMonthIndex) {
-    return now.getDate();
+    return Number(kstToday.day);
   }
 
   return new Date(year, monthIndex + 1, 0).getDate();

@@ -1,6 +1,7 @@
 "use client";
 
 import { parseAsString, useQueryState } from "nuqs";
+import { currentKstYearValue } from "@/lib/kst-date";
 import type { PeriodMode, PeriodOptions, ResolvedPeriod } from "@/lib/period-filter";
 
 interface PeriodFilterProps {
@@ -23,7 +24,7 @@ const quarters = [
 ];
 
 function defaultYear(options: PeriodOptions, value: ResolvedPeriod) {
-  return value.year ?? value.month?.slice(0, 4) ?? options.years[0]?.value ?? String(new Date().getFullYear());
+  return value.year ?? value.month?.slice(0, 4) ?? options.years[0]?.value ?? currentKstYearValue();
 }
 
 function defaultMonth(options: PeriodOptions, value: ResolvedPeriod) {

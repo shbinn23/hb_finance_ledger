@@ -2,13 +2,14 @@ import { getWhooingOverviewSource } from "@/server/whooing/repository";
 import { getMlForecastForOverview } from "@/features/ml/service";
 import { getFixedExpenseSchedule } from "@/server/whooing/analytics-repository";
 import { buildFixedExpenseSchedule, referenceDayForMonth } from "@/lib/financial-analysis/fixed-expense-schedule";
+import { currentKstMonthValue } from "@/lib/kst-date";
 import { buildOverviewViewModel } from "./model";
 
 export async function getOverviewViewModel() {
   const [source, mlForecast, fixedExpenseSource] = await Promise.all([
     getWhooingOverviewSource(),
     getMlForecastForOverview(),
-    getFixedExpenseSchedule(),
+    getFixedExpenseSchedule(currentKstMonthValue()),
   ]);
   const fixedExpenseSchedule = buildFixedExpenseSchedule(
     fixedExpenseSource.rows,

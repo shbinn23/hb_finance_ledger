@@ -11,6 +11,7 @@ import { fetchMlAnomalies, fetchMlForecast, isMlEngineEnabled, type MlAnomalyRes
 import { buildSpendingSeries, projectSpendingMonthEnd } from "@/lib/financial-analysis/spending-series";
 import { buildFixedExpenseSchedule, referenceDayForMonth, type FixedExpenseScheduleRow } from "@/lib/financial-analysis/fixed-expense-schedule";
 import { calculateAvailableResource, calculateSavingDefenseBalance, FINANCIAL_PLAN } from "@/lib/financial-analysis/resource-reservation";
+import { currentKstMonthValue } from "@/lib/kst-date";
 import { buildPeriodOptions, resolvePeriod, type PeriodQuery, type ResolvedPeriod } from "@/lib/period-filter";
 import { buildAnomalyPayload, buildAnomalyTask, buildForecastPayload, buildForecastTask } from "./task-adapter";
 import type { RightInsightChartRow, RightInsightPanelCard } from "@/features/sections/types";
@@ -85,8 +86,7 @@ function remainingDaysInMonth(today: string) {
 }
 
 function currentMonthValue() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return currentKstMonthValue();
 }
 
 function lastDateOfMonth(month: string) {

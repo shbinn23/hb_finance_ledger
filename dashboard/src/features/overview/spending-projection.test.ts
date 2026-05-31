@@ -64,7 +64,19 @@ test("overview repository exposes monthly expense category totals for resource r
   assert.match(typeSource, /currentExpenseByCategory/);
   assert.match(repositorySource, /getCurrentExpenseByCategory/);
   assert.match(repositorySource, /coalesce\(a\.category, 'normal'\) as category/);
-  assert.match(repositorySource, /getCurrentExpenseByCategory\(\)/);
+  assert.match(repositorySource, /getCurrentExpenseByCategory\(targetMonth\)/);
+});
+
+test("overview repository uses the current KST month instead of latest entry month for monthly sections", () => {
+  const repositorySource = readFileSync(resolve(__dirname, "../../server/whooing/repository.ts"), "utf8");
+  const overviewServiceSource = readFileSync(resolve(__dirname, "service.ts"), "utf8");
+
+  assert.match(repositorySource, /currentKstMonthValue/);
+  assert.match(repositorySource, /const targetMonth = Number\(currentKstMonthValue\(\)\.replace\("-", ""\)\)/);
+  assert.match(repositorySource, /getDailyExpenses\(targetMonth\)/);
+  assert.match(repositorySource, /getBaselineExpenses\(targetMonth\)/);
+  assert.match(repositorySource, /getCategories\(targetMonth\)/);
+  assert.match(overviewServiceSource, /getFixedExpenseSchedule\(currentKstMonthValue\(\)\)/);
 });
 
 test("overview spending series carries actual forward through no-spend observed days", () => {

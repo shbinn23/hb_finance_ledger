@@ -1,3 +1,5 @@
+import { currentKstMonthValue, currentKstQuarterValue, currentKstYearValue } from "./kst-date.ts";
+
 export type PeriodMode = "all" | "year" | "quarter" | "month";
 
 export interface PeriodQuery {
@@ -94,38 +96,47 @@ function quarterRange(year: string, quarter: string) {
   };
 }
 
-function currentMonthValue() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+function currentMonthValue(now?: Date) {
+  return currentKstMonthValue(now);
 }
 
-function currentYearValue() {
-  return String(new Date().getFullYear());
+function currentYearValue(now?: Date) {
+  return currentKstYearValue(now);
 }
 
-function currentQuarterValue() {
-  return String(Math.floor(new Date().getMonth() / 3) + 1);
+function currentQuarterValue(now?: Date) {
+  return currentKstQuarterValue(now);
 }
 
 function findOption(options: PeriodOption[], value: string | undefined) {
   return value ? options.find((option) => option.value === value) : undefined;
 }
 
-function fallbackMonth(options: PeriodOptions) {
-  const currentMonth = currentMonthValue();
+function fallbackMonth(options: PeriodOptions, now?: Date) {
+  const currentMonth = currentMonthValue(now);
   return findOption(options.months, currentMonth)?.value ?? options.months[0]?.value ?? currentMonth;
 }
 
-function fallbackYear(options: PeriodOptions) {
-  const currentYear = currentYearValue();
+function fallbackYear(options: PeriodOptions, now?: Date) {
+  const currentYear = currentYearValue(now);
   return findOption(options.years, currentYear)?.value ?? options.years[0]?.value ?? currentYear;
 }
 
-export function buildPeriodOptions(months: PeriodOption[]): PeriodOptions {
-  const yearValues = Array.from(new Set(months.map((month) => month.value.slice(0, 4)).filter(isYear)));
+function monthLabel(value: string) {
+  return value.replace("-", ".");
+}
+
+export function buildPeriodOptions(months: PeriodOption[], now?: Date): PeriodOptions {
+  const currentMonth = currentMonthValue(now);
+  const monthMap = new Map(months.map((month) => [month.value, month]));
+  if (!monthMap.has(currentMonth)) {
+    monthMap.set(currentMonth, { value: currentMonth, label: monthLabel(currentMonth) });
+  }
+  const monthOptions = Array.from(monthMap.values()).sort((a, b) => b.value.localeCompare(a.value));
+  const yearValues = Array.from(new Set(monthOptions.map((month) => month.value.slice(0, 4)).filter(isYear)));
   return {
     years: yearValues.map((year) => ({ value: year, label: `${year}년` })),
-    months,
+    months: monthOptions,
   };
 }
 
@@ -152,23 +163,23 @@ export function parsePeriodQuery(query: RawPeriodQuery | undefined): PeriodQuery
   return { period: "month" };
 }
 
-export function resolvePeriod(query: PeriodQuery, options: PeriodOptions): ResolvedPeriod {
+export function resolvePeriod(query: PeriodQuery, options: PeriodOptions, now?: Date): ResolvedPeriod {
   if (query.period === "all") {
     return { mode: "all", label: "전체", startDate: null, endDate: null };
   }
 
   if (query.period === "year") {
-    const year = findOption(options.years, query.year)?.value ?? fallbackYear(options);
+    const year = findOption(options.years, query.year)?.value ?? fallbackYear(options, now);
     return { mode: "year", label: `${year}년`, year, ...yearRange(year) };
   }
 
   if (query.period === "quarter") {
-    const year = findOption(options.years, query.year)?.value ?? fallbackYear(options);
-    const quarter = isQuarter(query.quarter) ? query.quarter : currentQuarterValue();
+    const year = findOption(options.years, query.year)?.value ?? fallbackYear(options, now);
+    const quarter = isQuarter(query.quarter) ? query.quarter : currentQuarterValue(now);
     return { mode: "quarter", label: `${year}년 ${quarter}분기`, year, quarter, ...quarterRange(year, quarter) };
   }
 
-  const month = findOption(options.months, query.month)?.value ?? fallbackMonth(options);
+  const month = findOption(options.months, query.month)?.value ?? fallbackMonth(options, now);
   const label = findOption(options.months, month)?.label ?? month.replace("-", ".");
   return { mode: "month", label, month, ...monthRange(month) };
 }

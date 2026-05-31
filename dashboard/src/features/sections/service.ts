@@ -15,6 +15,7 @@ import { getOverviewViewModel } from "@/features/overview/service";
 import { won, wonCompact } from "@/lib/format";
 import { buildFixedExpenseSchedule, referenceDayForMonth } from "@/lib/financial-analysis/fixed-expense-schedule";
 import { calculateAvailableResource, FINANCIAL_PLAN } from "@/lib/financial-analysis/resource-reservation";
+import { currentKstMonthValue } from "@/lib/kst-date";
 import { buildPeriodOptions, resolvePeriod, type PeriodQuery } from "@/lib/period-filter";
 import type {
   RightInsightPanelCard,
@@ -780,8 +781,7 @@ function buildInsights(key: SectionKey, model: Omit<SectionViewModel, "metrics" 
 }
 
 function currentMonthValue() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return currentKstMonthValue();
 }
 
 function resolveLedgerMonth(months: SectionViewModel["ledgerMonths"], requestedMonth?: string | null) {
