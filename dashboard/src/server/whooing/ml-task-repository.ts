@@ -1,5 +1,6 @@
 import { query } from "@/lib/db/postgres";
 import { strictFixedCandidatePolicy } from "@/lib/financial-analysis/fixed-expense-schedule";
+import type { ResolvedPeriod } from "@/lib/period-filter";
 
 export interface MlSeriesPoint {
   ds: string;
@@ -171,7 +172,45 @@ export async function getWhooingForecastTaskSource(today = todayKst()): Promise<
   };
 }
 
-export async function getWhooingAnomalyTaskRows(today = todayKst()): Promise<MlAnomalyFeatureRow[]> {
+export async function getWhooingAnomalyTaskRows(today = todayKst(), period?: ResolvedPeriod | null): Promise<MlAnomalyFeatureRow[]> {
+  if (period) {
+    const result = await query<AnomalyFeatureDbRow>(
+      `
+      select to_char(to_date(floor(e.entry_date)::int::text, 'YYYYMMDD'), 'YYYY-MM-DD') as transaction_date,
+             extract(day from to_date(floor(e.entry_date)::int::text, 'YYYYMMDD'))::text as day_of_month,
+             extract(isodow from to_date(floor(e.entry_date)::int::text, 'YYYYMMDD'))::text as day_of_week,
+             case when extract(isodow from to_date(floor(e.entry_date)::int::text, 'YYYYMMDD')) in (6, 7) then '1' else '0' end as is_weekend,
+             coalesce(a.title, '미분류') as parent_category,
+             coalesce(nullif(e.item, ''), '후잉 거래') as description,
+             sum(e.money)::text as amount
+      from whooing.entries e
+      join whooing.accounts a
+        on a.section_id = e.section_id
+       and a.account_id = e.l_account_id
+      where e.section_id = $1
+        and e.l_account = 'expenses'
+        and a.item_type = 'account'
+        and coalesce(a.category, 'normal') <> 'steady'
+        and ($2::int is null or e.entry_date >= $2)
+        and ($3::int is null or e.entry_date < $3)
+      group by 1, 2, 3, 4, 5, 6
+      order by 1
+      `,
+      [sectionId, period.startDate, period.endDate],
+    );
+
+    return result.rows.map((row) => ({
+      transaction_date: row.transaction_date,
+      day_of_month: numberValue(row.day_of_month),
+      day_of_week: numberValue(row.day_of_week),
+      is_weekend: numberValue(row.is_weekend),
+      is_holiday: 0,
+      parent_category: row.parent_category,
+      description: row.description || "후잉 거래",
+      amount: numberValue(row.amount),
+    }));
+  }
+
   const result = await query<AnomalyFeatureDbRow>(
     `
     select to_char(to_date(floor(e.entry_date)::int::text, 'YYYYMMDD'), 'YYYY-MM-DD') as transaction_date,

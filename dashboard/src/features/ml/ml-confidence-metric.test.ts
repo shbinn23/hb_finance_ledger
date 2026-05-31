@@ -35,3 +35,20 @@ test("ML page uses shared right insight panel data for model interpretation", ()
   assert.match(serviceSource, /가용 리소스 \/ 남은 일수/);
   assert.doesNotMatch(serviceSource, /monthlyLimit - currentSpend/);
 });
+
+test("ML page supports the common period filter with a separate aggregate report mode", () => {
+  const appPageSource = readFileSync(resolve(__dirname, "../../app/ml/page.tsx"), "utf8");
+  const pageSource = readFileSync(resolve(__dirname, "components/ml-page.tsx"), "utf8");
+  const typeSource = readFileSync(resolve(__dirname, "types.ts"), "utf8");
+  const serviceSource = readFileSync(resolve(__dirname, "service.ts"), "utf8");
+
+  assert.match(appPageSource, /parsePeriodQuery/);
+  assert.match(appPageSource, /periodQuery: parsePeriodQuery\(params\)/);
+  assert.match(pageSource, /<PeriodFilter options=\{model\.periodOptions\} value=\{model\.selectedPeriod\}/);
+  assert.match(typeSource, /selectedPeriod: ResolvedPeriod/);
+  assert.match(typeSource, /mode: "forecast" \| "period-report"/);
+  assert.match(serviceSource, /buildMlPeriodReportViewModel/);
+  assert.match(serviceSource, /기간 ML 리포트/);
+  assert.match(serviceSource, /선택 기간의 저장된 ML 예측 이력이 없습니다/);
+  assert.match(serviceSource, /if \(selectedPeriod\.mode !== "month"\)/);
+});

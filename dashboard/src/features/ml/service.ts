@@ -1,14 +1,20 @@
 import { formatDisplayDate, won, wonCompact } from "@/lib/format";
 import { getWhooingOverviewSource } from "@/server/whooing/repository";
 import { getWhooingAnomalyTaskRows, getWhooingForecastTaskSource } from "@/server/whooing/ml-task-repository";
-import { getFixedExpenseSchedule } from "@/server/whooing/analytics-repository";
+import {
+  getAvailableLedgerMonths,
+  getFixedExpenseSchedule,
+  getMonthlyTrend,
+  getPeriodAggregate,
+} from "@/server/whooing/analytics-repository";
 import { fetchMlAnomalies, fetchMlForecast, isMlEngineEnabled, type MlAnomalyResult, type MlForecastResult } from "@/server/ml/client";
 import { buildSpendingSeries, projectSpendingMonthEnd } from "@/lib/financial-analysis/spending-series";
 import { buildFixedExpenseSchedule, referenceDayForMonth, type FixedExpenseScheduleRow } from "@/lib/financial-analysis/fixed-expense-schedule";
 import { calculateAvailableResource, calculateSavingDefenseBalance, FINANCIAL_PLAN } from "@/lib/financial-analysis/resource-reservation";
+import { buildPeriodOptions, resolvePeriod, type PeriodQuery, type ResolvedPeriod } from "@/lib/period-filter";
 import { buildAnomalyPayload, buildAnomalyTask, buildForecastPayload, buildForecastTask } from "./task-adapter";
 import type { RightInsightChartRow, RightInsightPanelCard } from "@/features/sections/types";
-import type { MlAnomalyRow, MlForecastPoint, MlInsightsViewModel, MlMetric } from "./types";
+import type { MlAnomalyRow, MlForecastPoint, MlInsightsViewModel, MlMetric, MlPeriodReport } from "./types";
 
 const monthlyLimit = Number(process.env.MONTHLY_SPEND_LIMIT ?? 2_100_000);
 
@@ -78,6 +84,27 @@ function remainingDaysInMonth(today: string) {
   return Math.max(0, daysInMonth - day);
 }
 
+function currentMonthValue() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function lastDateOfMonth(month: string) {
+  const [year, monthValue] = month.split("-").map(Number);
+  const day = new Date(year, monthValue, 0).getDate();
+  return `${year}-${String(monthValue).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function forecastReferenceDate(period: ResolvedPeriod) {
+  if (period.mode !== "month" || !period.month) {
+    return undefined;
+  }
+
+  return period.month === currentMonthValue()
+    ? undefined
+    : lastDateOfMonth(period.month);
+}
+
 function dailyAvailableResource(availableResource: number, remainingDays: number) {
   if (remainingDays <= 0) return availableResource;
   return Math.trunc(availableResource / remainingDays);
@@ -117,14 +144,16 @@ function buildMetrics(
   source: "ml" | "fallback",
   forecastConfidence: MlMetric | null,
   resourceDailyAmount: number,
+  forecastLabel = "월말 예측",
+  forecastDetail?: string,
 ): MlMetric[] {
   const delta = projectedFinal - monthlyLimit;
 
   return [
     {
-      label: "월말 예측",
+      label: forecastLabel,
       value: wonCompact(projectedFinal),
-      detail: source === "ml" ? "ML 원본 forecast" : "linear fallback",
+      detail: forecastDetail ?? (source === "ml" ? "ML 원본 forecast" : "linear fallback"),
       tone: toneFromProjection(projectedFinal),
     },
     {
@@ -150,6 +179,50 @@ function buildMetrics(
       value: "-",
       detail: source === "ml" ? "실제 누적과 ML 예상 오차 계산 대기" : "ML 예상 없음",
       tone: "stable",
+    },
+  ];
+}
+
+function buildPeriodReportMetrics(params: {
+  period: ResolvedPeriod;
+  expenses: number;
+  transactionCount: number;
+  anomalyCount: number;
+  inputRows: number;
+  monthCount: number;
+}): MlMetric[] {
+  const average = params.monthCount > 0 ? Math.round(params.expenses / params.monthCount) : 0;
+
+  return [
+    {
+      label: "기간 지출",
+      value: wonCompact(params.expenses),
+      detail: `${params.period.label} expenses 합계`,
+      tone: params.expenses > monthlyLimit * Math.max(1, params.monthCount) ? "watch" : "stable",
+    },
+    {
+      label: "월평균",
+      value: wonCompact(average),
+      detail: params.monthCount > 0 ? `${params.monthCount}개월 기준` : "월별 지출 데이터 없음",
+      tone: average > monthlyLimit ? "watch" : "stable",
+    },
+    {
+      label: "이상 후보",
+      value: `${params.anomalyCount}건`,
+      detail: "선택 기간 anomaly rows",
+      tone: params.anomalyCount > 0 ? "watch" : "stable",
+    },
+    {
+      label: "지출 거래",
+      value: `${params.transactionCount}건`,
+      detail: "선택 기간 expenses 거래",
+      tone: "stable",
+    },
+    {
+      label: "모델 입력",
+      value: `${params.inputRows}건`,
+      detail: "기간 리포트 입력 rows",
+      tone: params.inputRows > 0 ? "stable" : "watch",
     },
   ];
 }
@@ -310,21 +383,186 @@ function buildMlRightInsightPanels(params: {
   ];
 }
 
+function buildMlPeriodRightInsightPanels(params: {
+  period: ResolvedPeriod;
+  expenses: number;
+  anomalies: MlAnomalyResult[];
+  monthlyTrend: Array<{ label: string; expenses: number }>;
+  inputRows: number;
+  engineEnabled: boolean;
+}): RightInsightPanelCard[] {
+  const flaggedCount = params.anomalies.filter((row) => row.isAnomaly).length;
+  const riskDrivers = buildRiskDriverRows(params.anomalies);
+  const monthCount = params.monthlyTrend.length;
+  const trendRows = params.monthlyTrend.map((row) => ({
+    label: row.label,
+    value: row.expenses,
+    detail: won(row.expenses),
+  }));
+
+  return [
+    {
+      eyebrow: "Period Boundary",
+      title: "기간 경계",
+      visuals: [
+        {
+          type: "note",
+          text: `${params.period.label}은 월말 forecast가 아니라 실제 지출과 이상 후보 중심으로 해석합니다. 선택 기간의 저장된 ML 예측 이력이 없습니다.`,
+        },
+      ],
+    },
+    {
+      eyebrow: "Anomaly Summary",
+      title: "이상 후보 요약",
+      visuals: riskDrivers.length > 0
+        ? [{ type: "bars", rows: riskDrivers }]
+        : [{ type: "note", text: "선택 기간에 표시할 이상 후보가 없습니다." }],
+    },
+    {
+      eyebrow: "Data Quality",
+      title: "데이터 품질",
+      visuals: [
+        {
+          type: "progress",
+          title: "기간 입력 커버리지",
+          value: params.inputRows > 0 ? 100 : 0,
+          detail: `${params.inputRows}개 입력 row · ${monthCount}개월 흐름`,
+          tone: params.inputRows > 0 ? "stable" : "watch",
+        },
+      ],
+    },
+    {
+      eyebrow: "Model Limit",
+      title: "모델 한계",
+      visuals: [
+        {
+          type: "note",
+          text: params.engineEnabled
+            ? "기간 모드에서는 forecast API를 호출하지 않습니다. 월말 예측은 월 선택에서만 해석합니다."
+            : "ML 엔진 자동 실행이 꺼져 있어 기간 리포트는 저장된 거래 기준으로 표시합니다.",
+        },
+      ],
+    },
+    {
+      eyebrow: "Action Guide",
+      title: "다음 행동",
+      visuals: [
+        {
+          type: "note",
+          text: flaggedCount > 0
+            ? `이상 후보 ${flaggedCount}건을 우선 확인하고, 월별 지출 흐름에서 급등한 달을 대조하세요.`
+            : "기간 지출 흐름을 확인하고, 필요하면 월 모드로 전환해 월말 예측을 따로 보세요.",
+        },
+      ],
+    },
+    {
+      eyebrow: "Actual Flow",
+      title: "월별 실제 지출",
+      visuals: trendRows.length > 0
+        ? [{ type: "sparkline", rows: trendRows }]
+        : [{ type: "note", text: "선택 기간의 월별 지출 데이터가 없습니다." }],
+    },
+  ];
+}
+
+function mapAnomalyRows(anomalies: MlAnomalyResult[]): MlAnomalyRow[] {
+  return anomalies.slice(0, 14).map((row) => ({
+    date: formatDisplayDate(row.date),
+    description: row.description,
+    category: row.category,
+    amount: won(row.amount),
+    score: `${Math.round(row.score)}점`,
+    isAnomaly: row.isAnomaly,
+  }));
+}
+
+async function buildMlPeriodReportViewModel(params: {
+  selectedPeriod: ResolvedPeriod;
+  periodOptions: ReturnType<typeof buildPeriodOptions>;
+  engineEnabled: boolean;
+}): Promise<MlInsightsViewModel> {
+  const anomalyTask = buildAnomalyTask();
+  const [periodAggregate, monthlyTrend, anomalyFeatureRows] = await Promise.all([
+    getPeriodAggregate(null, params.selectedPeriod),
+    getMonthlyTrend(null, params.selectedPeriod),
+    getWhooingAnomalyTaskRows(anomalyTask.today, params.selectedPeriod),
+  ]);
+  const anomalies = await fetchMlAnomalies(buildAnomalyPayload(anomalyTask.today, anomalyFeatureRows));
+  const flaggedCount = anomalies.filter((row) => row.isAnomaly).length;
+  const periodReport: MlPeriodReport = {
+    title: "월별 실제 지출",
+    description: "기간 모드에서는 forecast를 월말 예측으로 표시하지 않고 실제 월별 지출 흐름을 보여줍니다.",
+    monthlyTrend,
+    emptyText: "선택 기간의 월별 지출 데이터가 없습니다.",
+  };
+
+  return {
+    mode: "period-report",
+    selectedPeriod: params.selectedPeriod,
+    periodOptions: params.periodOptions,
+    header: {
+      title: "ML 인사이트",
+      description: `${params.selectedPeriod.label} 기준의 기간 ML 리포트입니다. 이 기간은 실제 지출과 이상 후보 중심으로 표시합니다.`,
+      badge: "기간 리포트",
+    },
+    source: "fallback",
+    engineEnabled: params.engineEnabled,
+    coach: {
+      title: "기간 ML 리포트",
+      body: "선택 기간의 저장된 ML 예측 이력이 없습니다. 이 기간은 실제 지출과 이상 후보 중심으로 표시합니다.",
+      tone: flaggedCount > 0 ? "watch" : "stable",
+    },
+    metrics: buildPeriodReportMetrics({
+      period: params.selectedPeriod,
+      expenses: periodAggregate.expenses,
+      transactionCount: periodAggregate.expenseTransactionCount,
+      anomalyCount: flaggedCount,
+      inputRows: anomalyFeatureRows.length,
+      monthCount: monthlyTrend.length,
+    }),
+    forecast: [],
+    periodReport,
+    anomalies: mapAnomalyRows(anomalies),
+    status: [
+      { label: "Report period", value: params.selectedPeriod.label, detail: params.selectedPeriod.mode },
+      { label: "Forecast mode", value: "disabled", detail: "기간 모드에서는 forecast API를 호출하지 않음" },
+      { label: "Anomaly task", value: anomalyTask.metric, detail: anomalyTask.dimensions.join(" / ") },
+      { label: "Model boundary", value: "period report", detail: "실제 지출과 이상 후보 중심" },
+    ],
+    rightInsightPanels: buildMlPeriodRightInsightPanels({
+      period: params.selectedPeriod,
+      expenses: periodAggregate.expenses,
+      anomalies,
+      monthlyTrend,
+      inputRows: anomalyFeatureRows.length,
+      engineEnabled: params.engineEnabled,
+    }),
+  };
+}
+
 export async function getMlForecastForOverview(): Promise<MlForecastResult | null> {
   const task = buildForecastTask();
   const source = await getWhooingForecastTaskSource(task.today);
   return fetchMlForecast(buildForecastPayload(source));
 }
 
-export async function getMlInsightsViewModel(): Promise<MlInsightsViewModel> {
-  const forecastTask = buildForecastTask();
-  const anomalyTask = buildAnomalyTask(forecastTask.today);
+export async function getMlInsightsViewModel(options: { periodQuery?: PeriodQuery } = {}): Promise<MlInsightsViewModel> {
+  const ledgerMonths = await getAvailableLedgerMonths();
+  const periodOptions = buildPeriodOptions(ledgerMonths);
+  const selectedPeriod = resolvePeriod(options.periodQuery ?? { period: "month" }, periodOptions);
   const engineEnabled = isMlEngineEnabled();
+
+  if (selectedPeriod.mode !== "month") {
+    return buildMlPeriodReportViewModel({ selectedPeriod, periodOptions, engineEnabled });
+  }
+
+  const forecastTask = buildForecastTask(forecastReferenceDate(selectedPeriod));
+  const anomalyTask = buildAnomalyTask(forecastTask.today);
   const [source, forecastSource, anomalyFeatureRows, fixedExpenseSource] = await Promise.all([
     getWhooingOverviewSource(),
     getWhooingForecastTaskSource(forecastTask.today),
     getWhooingAnomalyTaskRows(anomalyTask.today),
-    getFixedExpenseSchedule(),
+    getFixedExpenseSchedule(selectedPeriod.month),
   ]);
   const [forecast, anomalies] = await Promise.all([
     fetchMlForecast(buildForecastPayload(forecastSource)),
@@ -355,24 +593,24 @@ export async function getMlInsightsViewModel(): Promise<MlInsightsViewModel> {
     projectedActualMonthTotal: projectedActualFinal,
   });
   const forecastConfidence = merged.source === "ml" ? buildForecastConfidence(merged.points) : null;
-  const anomalyRows: MlAnomalyRow[] = anomalies.slice(0, 14).map((row) => ({
-    date: formatDisplayDate(row.date),
-    description: row.description,
-    category: row.category,
-    amount: won(row.amount),
-    score: `${Math.round(row.score)}점`,
-    isAnomaly: row.isAnomaly,
-  }));
+  const anomalyRows = mapAnomalyRows(anomalies);
   const flaggedCount = anomalies.filter((row) => row.isAnomaly).length;
   const tone = toneFromProjection(merged.projectedFinal);
   const forecastRange = forecast?.lowerFinal != null && forecast.upperFinal != null
     ? `${wonCompact(forecast.lowerFinal)} ~ ${wonCompact(forecast.upperFinal)}`
     : "local linear projection";
+  const currentMonth = selectedPeriod.month === currentMonthValue();
+  const forecastLabel = currentMonth ? "월말 예측" : "선택 월 모델 결과";
 
   return {
+    mode: "forecast",
+    selectedPeriod,
+    periodOptions,
     header: {
       title: "ML 인사이트",
-      description: "예측 모델과 이상탐지 모델을 함께 보며 이번 달 지출 위험을 판단합니다.",
+      description: currentMonth
+        ? "예측 모델과 이상탐지 모델을 함께 보며 이번 달 지출 위험을 판단합니다."
+        : `${selectedPeriod.label} 모델 결과와 이상탐지 후보를 확인합니다.`,
       badge: merged.source === "ml" ? "ML 연결" : "fallback",
     },
     source: merged.source,
@@ -382,8 +620,17 @@ export async function getMlInsightsViewModel(): Promise<MlInsightsViewModel> {
       body: buildCoachBody(merged.source, merged.projectedFinal, projectedActualFinal, flaggedCount, tone, engineEnabled),
       tone,
     },
-    metrics: buildMetrics(merged.projectedFinal, flaggedCount, merged.source, forecastConfidence, resourceDailyAmount),
+    metrics: buildMetrics(
+      merged.projectedFinal,
+      flaggedCount,
+      merged.source,
+      forecastConfidence,
+      resourceDailyAmount,
+      forecastLabel,
+      currentMonth ? undefined : `${selectedPeriod.label} forecast`,
+    ),
     forecast: merged.points,
+    periodReport: null,
     anomalies: anomalyRows,
     status: [
       { label: "Forecast task", value: forecastTask.metric, detail: forecastTask.dimensions.join(" / ") },

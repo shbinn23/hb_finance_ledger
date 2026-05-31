@@ -1,5 +1,7 @@
 import type { RiskLevel } from "@/features/overview/types";
 import type { RightInsightPanelCard } from "@/features/sections/types";
+import type { MonthlyTrendRow } from "@/server/whooing/analytics-repository";
+import type { PeriodOptions, ResolvedPeriod } from "@/lib/period-filter";
 
 export interface MlMetric {
   label: string;
@@ -34,7 +36,17 @@ export interface MlStatusCard {
   detail: string;
 }
 
+export interface MlPeriodReport {
+  title: string;
+  description: string;
+  monthlyTrend: MonthlyTrendRow[];
+  emptyText: string;
+}
+
 export interface MlInsightsViewModel {
+  mode: "forecast" | "period-report";
+  selectedPeriod: ResolvedPeriod;
+  periodOptions: PeriodOptions;
   header: {
     title: string;
     description: string;
@@ -49,6 +61,7 @@ export interface MlInsightsViewModel {
   };
   metrics: MlMetric[];
   forecast: MlForecastPoint[];
+  periodReport: MlPeriodReport | null;
   anomalies: MlAnomalyRow[];
   status: MlStatusCard[];
   rightInsightPanels: RightInsightPanelCard[];
