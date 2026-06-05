@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { won } from "@/lib/format";
+import { formatDisplayDate, won } from "@/lib/format";
 import { RightInsightPanel } from "@/features/sections/components/section-side-panel";
 import type { CardsDataQualityTone, CardsViewModel } from "../types";
 
@@ -43,6 +43,25 @@ function recordedDiscountDetail(status: CardsViewModel["summary"]["capStatuses"]
   return `백필 기준 ${won(status.backfilledDiscountAmount)}`;
 }
 
+function cardPaymentStatus(value: string): CardsDataQualityTone {
+  if (value === "ready") return { label: "등록 가능", tone: "stable" };
+  if (value === "registered") return { label: "등록됨", tone: "neutral" };
+  if (value === "needs_review") return { label: "확인 필요", tone: "watch" };
+  if (value === "asset_required") return { label: "계좌 선택 필요", tone: "watch" };
+  return { label: "청구 없음", tone: "neutral" };
+}
+
+function formatUsePeriodText(startDate: number, endDate: number) {
+  return `${formatDisplayDate(String(startDate))}~${formatDisplayDate(String(endDate))}`;
+}
+
+function cardPaymentActionLabel(status: string) {
+  if (status === "registered") return "등록됨";
+  if (status === "asset_required") return "계좌 선택 필요";
+  if (status === "no_bill") return "청구 없음";
+  return "상환 등록 준비 중";
+}
+
 export function CardsPage({ model }: CardsPageProps) {
   return (
     <>
@@ -75,6 +94,7 @@ export function CardsPage({ model }: CardsPageProps) {
       <div className="dashboard-grid">
         <div className="dashboard-main">
           <CardSummarySection model={model} />
+          <CardBillPaymentSection model={model} />
           <CardCapStatusSection model={model} />
           <RecentBenefitEventsSection model={model} />
         </div>
@@ -137,6 +157,72 @@ function CardSummarySection({ model }: CardsPageProps) {
                 <tr>
                   <td colSpan={7} className="empty-cell">
                     카드별 요약에 사용할 카드 지출 데이터가 아직 없습니다.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CardBillPaymentSection({ model }: CardsPageProps) {
+  const { summary } = model;
+
+  return (
+    <Card className="transaction-panel">
+      <CardHeader>
+        <CardDescription>Card Payment Beta</CardDescription>
+        <div className="metric-card-top">
+          <CardTitle>카드대금 상환 Beta</CardTitle>
+          <Badge tone="neutral">Read-only</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <p className="metric-detail">
+          후잉 Bill 기준 청구액을 읽고, 기존 상환 이력으로 출금계좌를 추천합니다. 이번 단계에서는 실제 등록 버튼은 비활성화되어 있습니다.
+        </p>
+
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>카드</th>
+                <th>사용기간</th>
+                <th>결제일</th>
+                <th className="amount">청구금액</th>
+                <th>출금계좌 추천</th>
+                <th>상태</th>
+                <th>액션</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.cardBillPayments.length > 0 ? summary.cardBillPayments.map((row) => {
+                const status = cardPaymentStatus(row.repaymentStatus);
+                return (
+                  <tr key={`${row.billMonth}:${row.cardAccountId}`}>
+                    <td>{row.cardName}</td>
+                    <td>{formatUsePeriodText(row.useStartDate, row.useEndDate)}</td>
+                    <td>{row.payDate ? `${row.payDate}일` : "-"}</td>
+                    <td className="amount">{won(row.billAmount)}</td>
+                    <td>{row.recommendedAssetName ?? "추천 불가"}</td>
+                    <td>
+                      <Badge tone={status.tone}>{status.label}</Badge>
+                      <div className="metric-detail">{row.statusReason}</div>
+                    </td>
+                    <td>
+                      <button type="button" className="ui-button ui-button-secondary ui-button-sm" disabled>
+                        {cardPaymentActionLabel(row.repaymentStatus)}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr>
+                  <td colSpan={7} className="empty-cell">
+                    카드대금 상환 후보가 없습니다.
                   </td>
                 </tr>
               )}

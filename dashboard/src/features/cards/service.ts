@@ -55,6 +55,10 @@ function buildRightInsightPanels(summary: CardsViewModel["summary"]): RightInsig
       visuals: [
         {
           type: "note",
+          text: "카드대금 상환은 비용이 아니라 부채 감소와 자산 감소 거래입니다.",
+        },
+        {
+          type: "note",
           text: "기존 카드 거래는 승인금액이 없어 실적 산정에서 제외되거나 legacy 추정으로 분리됩니다.",
         },
         {
@@ -81,6 +85,7 @@ function buildRightInsightPanels(summary: CardsViewModel["summary"]): RightInsig
       eyebrow: "Next Action",
       title: "다음 행동",
       visuals: [
+        { type: "note", text: "상환 등록은 중복 방지와 확인 모달을 붙인 뒤 활성화합니다." },
         { type: "note", text: "월말에는 카드앱·명세서와 카드별 요약을 대조하세요." },
         { type: "note", text: "6월부터 자동 산정 가능한 rule이 늘어나는지 확인하세요." },
         { type: "note", text: "자주 쓰는 카드부터 혜택 rule을 추가해 추적 범위를 넓히세요." },

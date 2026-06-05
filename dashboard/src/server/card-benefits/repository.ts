@@ -2,6 +2,14 @@ import { randomUUID } from "node:crypto";
 import { query } from "@/lib/db/postgres";
 import { getAccountDisplayName } from "@/lib/account-display-name";
 import { formatDisplayDate } from "@/lib/format";
+import { currentKstMonthValue } from "@/lib/kst-date";
+import {
+  buildCardBillPaymentRows,
+  type CardBillPaymentRow,
+  type CardBillRecommendedAccount,
+  type CardBillRepaymentMatch,
+  type CardBillRow,
+} from "@/lib/card-benefits/card-bill-payment";
 import {
   calculateBenefitCapStatus,
   calculateCardStatementEstimate,
@@ -9,6 +17,7 @@ import {
   type BenefitCapAutoStatus,
   type CardStatementEstimate,
 } from "@/lib/card-benefits/assets-summary";
+import { getWhooingCreditCardBillRows } from "@/server/whooing/bill-repository";
 import type {
   CardBenefitRule,
   PaymentChannel,
@@ -108,6 +117,23 @@ interface CardStatementEstimateDbRow {
   legacy_count: string | number;
 }
 
+interface CreditCardTitleDbRow {
+  account_id: string;
+  title: string;
+}
+
+interface RecommendedRepaymentAccountDbRow {
+  card_account_id: string;
+  asset_account_id: string;
+  asset_title: string;
+}
+
+interface RepaymentMatchDbRow {
+  card_account_id: string;
+  bill_amount: string | number;
+  match_count: string | number;
+}
+
 export interface CardBenefitRuleSummary {
   ruleId: string;
   ruleName: string;
@@ -169,6 +195,7 @@ export interface CardBenefitAssetsSummary {
   ruleDiscounts: CardBenefitRuleSummary[];
   cardDiscounts: CardBenefitCardSummary[];
   capStatuses: CardBenefitCapStatus[];
+  cardBillPayments: CardBillPaymentRow[];
   recentEvents: CardBenefitRecentEvent[];
   statementEstimates: CardStatementEstimateRow[];
 }
@@ -237,6 +264,117 @@ async function resolveBenefitMonth(month?: string | null) {
 
 function displayCardName(accountType: string, accountId: string, sourceTitle: string) {
   return getAccountDisplayName(accountType, accountId, sourceTitle);
+}
+
+async function getCardBillPayments(): Promise<CardBillPaymentRow[]> {
+  const billMonth = currentKstMonthValue();
+  const { startDate, endDate } = entryDateRangeForBenefitMonth(billMonth);
+  const [
+    billRows,
+    cardTitles,
+    recommendedAccounts,
+    repaymentMatches,
+  ] = await Promise.all([
+    getWhooingCreditCardBillRows(billMonth),
+    query<CreditCardTitleDbRow>(
+      `
+      select account_id, title
+      from whooing.accounts
+      where section_id = $1
+        and account_type = 'liabilities'
+        and item_type = 'account'
+        and category = 'creditcard'
+      `,
+      [sectionId],
+    ),
+    query<RecommendedRepaymentAccountDbRow>(
+      `
+      with ranked as (
+        select
+          e.l_account_id as card_account_id,
+          e.r_account_id as asset_account_id,
+          coalesce(a.title, e.r_account_id) as asset_title,
+          row_number() over (
+            partition by e.l_account_id
+            order by floor(e.entry_date) desc, e.entry_id desc
+          ) as rn
+        from whooing.entries e
+        join whooing.accounts c
+          on c.section_id = e.section_id
+         and c.account_type = 'liabilities'
+         and c.account_id = e.l_account_id
+         and c.category = 'creditcard'
+        left join whooing.accounts a
+          on a.section_id = e.section_id
+         and a.account_type = 'assets'
+         and a.account_id = e.r_account_id
+        where e.section_id = $1
+          and e.l_account = 'liabilities'
+          and e.r_account = 'assets'
+      )
+      select card_account_id, asset_account_id, asset_title
+      from ranked
+      where rn = 1
+      `,
+      [sectionId],
+    ),
+    query<RepaymentMatchDbRow>(
+      `
+      select
+        e.l_account_id as card_account_id,
+        e.money::text as bill_amount,
+        count(*)::text as match_count
+      from whooing.entries e
+      join whooing.accounts c
+        on c.section_id = e.section_id
+       and c.account_type = 'liabilities'
+       and c.account_id = e.l_account_id
+       and c.category = 'creditcard'
+      where e.section_id = $1
+        and e.l_account = 'liabilities'
+        and e.r_account = 'assets'
+        and e.entry_date >= $2
+        and e.entry_date < $3
+        and (
+          e.item in ('카드대금 상환', '카드정산 결제')
+          or e.item like '%상환%'
+          or e.item like '%정산%'
+        )
+      group by e.l_account_id, e.money
+      `,
+      [sectionId, startDate, endDate],
+    ),
+  ]);
+
+  const titleByCard = new Map(cardTitles.rows.map((row) => [row.account_id, row.title]));
+  const mappedBillRows: CardBillRow[] = billRows.map((bill) => {
+    const sourceTitle = titleByCard.get(bill.accountId) ?? bill.accountId;
+    return {
+      cardAccountId: bill.accountId,
+      cardName: displayCardName("liabilities", bill.accountId, sourceTitle),
+      billAmount: bill.amount,
+      useStartDate: bill.startUseDate,
+      useEndDate: bill.endUseDate,
+      payDate: bill.payDate,
+    };
+  });
+  const mappedRecommendations: CardBillRecommendedAccount[] = recommendedAccounts.rows.map((row) => ({
+    cardAccountId: row.card_account_id,
+    assetAccountId: row.asset_account_id,
+    assetName: displayCardName("assets", row.asset_account_id, row.asset_title),
+  }));
+  const mappedMatches: CardBillRepaymentMatch[] = repaymentMatches.rows.map((row) => ({
+    cardAccountId: row.card_account_id,
+    billAmount: numberFromDb(row.bill_amount),
+    matchCount: Number(row.match_count),
+  }));
+
+  return buildCardBillPaymentRows({
+    billMonth,
+    billRows: mappedBillRows,
+    recommendedAccounts: mappedRecommendations,
+    repaymentMatches: mappedMatches,
+  });
 }
 
 function monthlyCapTiersFromDb(value: unknown): CardBenefitRule["monthlyCapTiers"] {
@@ -415,6 +553,7 @@ export async function getCardBenefitMonthlyAssetsSummary(month?: string | null):
     ruleDiscounts,
     cardDiscounts,
     capStatuses,
+    cardBillPayments,
     recentEvents,
     statementEstimates,
   ] = await Promise.all([
@@ -527,6 +666,7 @@ export async function getCardBenefitMonthlyAssetsSummary(month?: string | null):
       `,
       [startDate, endDate, previousStartDate, previousEndDate, sectionId],
     ),
+    getCardBillPayments(),
     query<CardBenefitRecentEventDbRow>(
       `
       select
@@ -683,6 +823,7 @@ export async function getCardBenefitMonthlyAssetsSummary(month?: string | null):
         usageRate: calculatedCap.usageRate,
       };
     }),
+    cardBillPayments,
     recentEvents: recentEvents.rows.map((row) => ({
       eventId: row.event_id,
       date: formatDisplayDate(String(Math.floor(row.entry_date))),
@@ -723,6 +864,7 @@ function emptyCardBenefitAssetsSummary(month: string): CardBenefitAssetsSummary 
     ruleDiscounts: [],
     cardDiscounts: [],
     capStatuses: [],
+    cardBillPayments: [],
     recentEvents: [],
     statementEstimates: [],
   };

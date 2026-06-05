@@ -15,6 +15,9 @@ test("cards page owns card benefit and statement beta content", () => {
   assert.match(serviceSource, /카드 관리/);
   assert.match(componentSource, /카드별 요약/);
   assert.match(componentSource, /카드별 혜택 한도 상태/);
+  assert.match(componentSource, /카드대금 상환 Beta/);
+  assert.match(componentSource, /상환 등록 준비 중/);
+  assert.match(componentSource, /출금계좌 추천/);
   assert.match(componentSource, /최근 카드혜택 거래/);
   assert.doesNotMatch(componentSource, /카드혜택 Beta/);
   assert.doesNotMatch(componentSource, /카드 실적 예상 Beta/);
