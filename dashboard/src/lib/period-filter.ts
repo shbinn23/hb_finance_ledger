@@ -123,12 +123,13 @@ function fallbackYear(options: PeriodOptions, now?: Date) {
 }
 
 function monthLabel(value: string) {
-  return value.replace("-", ".");
+  const parts = toMonthParts(value);
+  return `${parts.year}년 ${parts.month}월`;
 }
 
 export function buildPeriodOptions(months: PeriodOption[], now?: Date): PeriodOptions {
   const currentMonth = currentMonthValue(now);
-  const monthMap = new Map(months.map((month) => [month.value, month]));
+  const monthMap = new Map(months.map((month) => [month.value, { value: month.value, label: monthLabel(month.value) }]));
   if (!monthMap.has(currentMonth)) {
     monthMap.set(currentMonth, { value: currentMonth, label: monthLabel(currentMonth) });
   }
@@ -180,6 +181,6 @@ export function resolvePeriod(query: PeriodQuery, options: PeriodOptions, now?: 
   }
 
   const month = findOption(options.months, query.month)?.value ?? fallbackMonth(options, now);
-  const label = findOption(options.months, month)?.label ?? month.replace("-", ".");
+  const label = findOption(options.months, month)?.label ?? monthLabel(month);
   return { mode: "month", label, month, ...monthRange(month) };
 }

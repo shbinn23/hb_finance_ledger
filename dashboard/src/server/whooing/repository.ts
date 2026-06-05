@@ -306,8 +306,8 @@ async function getRecentTransactions(): Promise<TransactionRow[]> {
   }));
 }
 
-export async function getWhooingOverviewSource(): Promise<OverviewSource> {
-  const targetMonth = Number(currentKstMonthValue().replace("-", ""));
+export async function getWhooingOverviewSource(month?: string): Promise<OverviewSource> {
+  const targetMonth = Number((month ?? currentKstMonthValue()).replace("-", ""));
   const [
     sync,
     balances,

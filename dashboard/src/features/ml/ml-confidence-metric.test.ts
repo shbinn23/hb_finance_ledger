@@ -52,3 +52,12 @@ test("ML page supports the common period filter with a separate aggregate report
   assert.match(serviceSource, /선택 기간의 저장된 ML 예측 이력이 없습니다/);
   assert.match(serviceSource, /if \(selectedPeriod\.mode !== "month"\)/);
 });
+
+test("ML month mode uses the selected month for actual spending source", () => {
+  const serviceSource = readFileSync(resolve(__dirname, "service.ts"), "utf8");
+  const repositorySource = readFileSync(resolve(__dirname, "../../server/whooing/repository.ts"), "utf8");
+
+  assert.match(serviceSource, /getWhooingOverviewSource\(selectedPeriod\.month\)/);
+  assert.match(serviceSource, /getWhooingAnomalyTaskRows\(anomalyTask\.today, selectedPeriod\)/);
+  assert.match(repositorySource, /export async function getWhooingOverviewSource\(month\?: string\)/);
+});

@@ -8,8 +8,8 @@ const options = {
     { value: "2025", label: "2025년" },
   ],
   months: [
-    { value: "2026-05", label: "2026.05" },
-    { value: "2026-04", label: "2026.04" },
+    { value: "2026-05", label: "2026년 5월" },
+    { value: "2026-04", label: "2026년 4월" },
   ],
 };
 
@@ -54,8 +54,8 @@ test("period filter current fallback uses KST date boundaries", () => {
       { value: "2025", label: "2025년" },
     ],
     months: [
-      { value: "2026-06", label: "2026.06" },
-      { value: "2026-05", label: "2026.05" },
+      { value: "2026-06", label: "2026년 6월" },
+      { value: "2026-05", label: "2026년 5월" },
     ],
   };
 
@@ -78,9 +78,24 @@ test("period filter current fallback uses KST date boundaries", () => {
 test("period options include current KST month even before entries exist", () => {
   const kstMidnightFromUtc = new Date("2026-05-31T15:05:00Z");
   const periodOptions = buildPeriodOptions([
-    { value: "2026-05", label: "2026.05" },
+    { value: "2026-05", label: "2026년 5월" },
   ], kstMidnightFromUtc);
 
   assert.deepEqual(periodOptions.months.map((month) => month.value), ["2026-06", "2026-05"]);
+  assert.deepEqual(periodOptions.months.map((month) => month.label), ["2026년 6월", "2026년 5월"]);
   assert.deepEqual(periodOptions.years.map((year) => year.value), ["2026"]);
+});
+
+test("period options normalize every month label from its own value", () => {
+  const kstMidnightFromUtc = new Date("2026-05-31T15:05:00Z");
+  const periodOptions = buildPeriodOptions([
+    { value: "2026-05", label: "2026년 5월" },
+    { value: "2026-04", label: "2026년 5월" },
+  ], kstMidnightFromUtc);
+
+  assert.deepEqual(periodOptions.months, [
+    { value: "2026-06", label: "2026년 6월" },
+    { value: "2026-05", label: "2026년 5월" },
+    { value: "2026-04", label: "2026년 4월" },
+  ]);
 });

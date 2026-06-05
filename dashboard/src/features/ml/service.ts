@@ -559,9 +559,9 @@ export async function getMlInsightsViewModel(options: { periodQuery?: PeriodQuer
   const forecastTask = buildForecastTask(forecastReferenceDate(selectedPeriod));
   const anomalyTask = buildAnomalyTask(forecastTask.today);
   const [source, forecastSource, anomalyFeatureRows, fixedExpenseSource] = await Promise.all([
-    getWhooingOverviewSource(),
+    getWhooingOverviewSource(selectedPeriod.month),
     getWhooingForecastTaskSource(forecastTask.today),
-    getWhooingAnomalyTaskRows(anomalyTask.today),
+    getWhooingAnomalyTaskRows(anomalyTask.today, selectedPeriod),
     getFixedExpenseSchedule(selectedPeriod.month),
   ]);
   const [forecast, anomalies] = await Promise.all([
