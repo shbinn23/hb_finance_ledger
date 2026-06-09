@@ -5,20 +5,43 @@ import test from "node:test";
 
 const srcRoot = resolve(import.meta.dirname, "../..");
 
-test("cards page owns card benefit and statement beta content", () => {
+test("cards dashboard is split into overview benefits and bills surfaces", () => {
   const pageSource = readFileSync(resolve(srcRoot, "app/cards/page.tsx"), "utf8");
+  const benefitsPageSource = readFileSync(resolve(srcRoot, "app/cards/benefits/page.tsx"), "utf8");
+  const billsPageSource = readFileSync(resolve(srcRoot, "app/cards/bills/page.tsx"), "utf8");
+  const billPaymentRouteSource = readFileSync(resolve(srcRoot, "app/api/cards/bill-payment/route.ts"), "utf8");
   const serviceSource = readFileSync(resolve(import.meta.dirname, "service.ts"), "utf8");
   const componentSource = readFileSync(resolve(import.meta.dirname, "components/cards-page.tsx"), "utf8");
+  const actionSource = readFileSync(resolve(import.meta.dirname, "components/card-bill-payment-action.tsx"), "utf8");
   const sectionSource = readFileSync(resolve(import.meta.dirname, "../sections/components/section-page.tsx"), "utf8");
 
   assert.match(pageSource, /getCardsViewModel/);
+  assert.match(pageSource, /view="overview"/);
+  assert.match(benefitsPageSource, /view="benefits"/);
+  assert.match(billsPageSource, /view="bills"/);
   assert.match(serviceSource, /카드 관리/);
+  assert.match(componentSource, /CardsPageView/);
+  assert.match(componentSource, /CardSectionNav/);
+  assert.match(componentSource, /Overview/);
+  assert.match(componentSource, /혜택·실적/);
+  assert.match(componentSource, /명세서·상환/);
   assert.match(componentSource, /카드별 요약/);
   assert.match(componentSource, /카드별 혜택 한도 상태/);
   assert.match(componentSource, /카드대금 상환 Beta/);
-  assert.match(componentSource, /상환 등록 준비 중/);
+  assert.match(componentSource, /visibleCardBillPayments/);
+  assert.match(componentSource, /row\.billAmount > 0/);
+  assert.match(componentSource, /청구금액이 0원인 카드는 제외합니다/);
+  assert.match(componentSource, /이번 청구월에는 상환할 카드대금이 없습니다/);
+  assert.match(actionSource, /상환 등록/);
+  assert.match(actionSource, /\/api\/cards\/bill-payment/);
+  assert.match(actionSource, /실제 은행 이체가 아니라 후잉 장부 기록/);
+  assert.match(billPaymentRouteSource, /registerCardBillPayment/);
+  assert.match(billPaymentRouteSource, /countCardBillRepaymentMatches/);
   assert.match(componentSource, /출금계좌 추천/);
   assert.match(componentSource, /최근 카드혜택 거래/);
+  assert.match(componentSource, /view === "overview"/);
+  assert.match(componentSource, /view === "benefits"/);
+  assert.match(componentSource, /view === "bills"/);
   assert.doesNotMatch(componentSource, /카드혜택 Beta/);
   assert.doesNotMatch(componentSource, /카드 실적 예상 Beta/);
   assert.doesNotMatch(componentSource, /카드 명세서 예측 Beta/);

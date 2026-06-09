@@ -134,6 +134,14 @@ interface RepaymentMatchDbRow {
   match_count: string | number;
 }
 
+interface AccountExistsDbRow {
+  exists: boolean;
+}
+
+interface DuplicateRepaymentDbRow {
+  match_count: string | number;
+}
+
 export interface CardBenefitRuleSummary {
   ruleId: string;
   ruleName: string;
@@ -375,6 +383,77 @@ async function getCardBillPayments(): Promise<CardBillPaymentRow[]> {
     recommendedAccounts: mappedRecommendations,
     repaymentMatches: mappedMatches,
   });
+}
+
+export async function assetAccountExists(assetAccountId: string) {
+  const result = await query<AccountExistsDbRow>(
+    `
+    select exists (
+      select 1
+      from whooing.accounts
+      where section_id = $1
+        and account_type = 'assets'
+        and item_type = 'account'
+        and account_id = $2
+    ) as exists
+    `,
+    [sectionId, assetAccountId],
+  );
+
+  return Boolean(result.rows[0]?.exists);
+}
+
+export async function creditCardAccountExists(cardAccountId: string) {
+  const result = await query<AccountExistsDbRow>(
+    `
+    select exists (
+      select 1
+      from whooing.accounts
+      where section_id = $1
+        and account_type = 'liabilities'
+        and item_type = 'account'
+        and category = 'creditcard'
+        and account_id = $2
+    ) as exists
+    `,
+    [sectionId, cardAccountId],
+  );
+
+  return Boolean(result.rows[0]?.exists);
+}
+
+export async function countCardBillRepaymentMatches({
+  billMonth,
+  cardAccountId,
+  amount,
+}: {
+  billMonth: string;
+  cardAccountId: string;
+  amount: number;
+}) {
+  const { startDate, endDate } = entryDateRangeForBenefitMonth(billMonth);
+  const result = await query<DuplicateRepaymentDbRow>(
+    `
+    select count(*)::text as match_count
+    from whooing.entries
+    where section_id = $1
+      and l_account = 'liabilities'
+      and l_account_id = $2
+      and r_account = 'assets'
+      and entry_date >= $3
+      and entry_date < $4
+      and money = $5
+      and (
+        item in ('카드대금 상환', '카드정산 결제')
+        or item like '%상환%'
+        or item like '%정산%'
+        or memo like '%[CARD_BILL]%'
+      )
+    `,
+    [sectionId, cardAccountId, startDate, endDate, amount],
+  );
+
+  return Number(result.rows[0]?.match_count ?? 0);
 }
 
 function monthlyCapTiersFromDb(value: unknown): CardBenefitRule["monthlyCapTiers"] {

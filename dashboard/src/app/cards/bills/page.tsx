@@ -9,7 +9,7 @@ export default async function Page() {
 
   return (
     <Shell>
-      <CardsPage model={model} view="overview" />
+      <CardsPage model={model} view="bills" />
     </Shell>
   );
 }

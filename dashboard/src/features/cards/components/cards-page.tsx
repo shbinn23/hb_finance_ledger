@@ -1,12 +1,17 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDisplayDate, won } from "@/lib/format";
 import { RightInsightPanel } from "@/features/sections/components/section-side-panel";
 import type { CardsDataQualityTone, CardsViewModel } from "../types";
+import { CardBillPaymentAction } from "./card-bill-payment-action";
 
 interface CardsPageProps {
   model: CardsViewModel;
+  view?: CardsPageView;
 }
+
+export type CardsPageView = "overview" | "benefits" | "bills";
 
 function dataQuality(value: string): CardsDataQualityTone {
   if (value === "structured") return { label: "구조화", tone: "stable" };
@@ -55,14 +60,7 @@ function formatUsePeriodText(startDate: number, endDate: number) {
   return `${formatDisplayDate(String(startDate))}~${formatDisplayDate(String(endDate))}`;
 }
 
-function cardPaymentActionLabel(status: string) {
-  if (status === "registered") return "등록됨";
-  if (status === "asset_required") return "계좌 선택 필요";
-  if (status === "no_bill") return "청구 없음";
-  return "상환 등록 준비 중";
-}
-
-export function CardsPage({ model }: CardsPageProps) {
+export function CardsPage({ model, view = "overview" }: CardsPageProps) {
   return (
     <>
       <section className="section-hero">
@@ -73,6 +71,8 @@ export function CardsPage({ model }: CardsPageProps) {
         </div>
         <Badge tone="neutral">{model.header.badge}</Badge>
       </section>
+
+      <CardSectionNav view={view} />
 
       <div className="metric-grid">
         {model.metrics.map((metric) => (
@@ -93,10 +93,22 @@ export function CardsPage({ model }: CardsPageProps) {
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
-          <CardSummarySection model={model} />
-          <CardBillPaymentSection model={model} />
-          <CardCapStatusSection model={model} />
-          <RecentBenefitEventsSection model={model} />
+          {view === "overview" ? (
+            <CardSummarySection model={model} compact />
+          ) : null}
+          {view === "benefits" ? (
+            <>
+              <CardSummarySection model={model} />
+              <CardCapStatusSection model={model} />
+              <RecentBenefitEventsSection model={model} />
+            </>
+          ) : null}
+          {view === "bills" ? (
+            <>
+              <CardStatementSection model={model} />
+              <CardBillPaymentSection model={model} />
+            </>
+          ) : null}
         </div>
 
         <aside className="dashboard-side">
@@ -107,7 +119,29 @@ export function CardsPage({ model }: CardsPageProps) {
   );
 }
 
-function CardSummarySection({ model }: CardsPageProps) {
+function CardSectionNav({ view }: { view: CardsPageView }) {
+  const items = [
+    { href: "/cards", label: "Overview", value: "overview" },
+    { href: "/cards/benefits", label: "혜택·실적", value: "benefits" },
+    { href: "/cards/bills", label: "명세서·상환", value: "bills" },
+  ] as const;
+
+  return (
+    <nav className="section-subnav" aria-label="카드 관리 하위 메뉴">
+      {items.map((item) => (
+        <Link
+          key={item.value}
+          href={item.href}
+          className={`ui-button ui-button-sm ${view === item.value ? "ui-button-primary" : "ui-button-secondary"}`}
+        >
+          {item.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+function CardSummarySection({ model, compact = false }: CardsPageProps & { compact?: boolean }) {
   const { summary } = model;
 
   return (
@@ -139,7 +173,7 @@ function CardSummarySection({ model }: CardsPageProps) {
             </thead>
             <tbody>
               {summary.statementEstimates.length > 0 ? (
-                summary.statementEstimates.map((row) => {
+                summary.statementEstimates.slice(0, compact ? 6 : undefined).map((row) => {
                   const quality = dataQuality(row.dataQuality);
                   return (
                     <tr key={`${row.cardAccountType}:${row.cardAccountId}`}>
@@ -168,8 +202,65 @@ function CardSummarySection({ model }: CardsPageProps) {
   );
 }
 
+function CardStatementSection({ model }: CardsPageProps) {
+  const { summary } = model;
+
+  return (
+    <Card className="transaction-panel">
+      <CardHeader>
+        <CardDescription>Statement Estimate</CardDescription>
+        <div className="metric-card-top">
+          <CardTitle>카드 명세서 예측</CardTitle>
+          <Badge tone="neutral">Beta</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <p className="metric-detail">
+          명세서는 매입금액 기준입니다. 구조화 거래는 매입금액을, 기존 후잉 거래는 legacy 추정액을 사용합니다.
+        </p>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>카드</th>
+                <th className="amount">명세서 예상</th>
+                <th className="amount">구조화 매입</th>
+                <th className="amount">legacy 추정</th>
+                <th className="amount">예상 할인</th>
+                <th>데이터 품질</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.statementEstimates.length > 0 ? summary.statementEstimates.map((row) => {
+                const quality = dataQuality(row.dataQuality);
+                return (
+                  <tr key={`${row.cardAccountType}:${row.cardAccountId}`}>
+                    <td>{row.cardName}</td>
+                    <td className="amount">{won(row.statementEstimate)}</td>
+                    <td className="amount">{won(row.structuredPostingTotal)}</td>
+                    <td className="amount">{won(row.legacyPostingTotal)}</td>
+                    <td className="amount">{won(row.statementVsEffectiveDelta)}</td>
+                    <td><Badge tone={quality.tone}>{quality.label}</Badge></td>
+                  </tr>
+                );
+              }) : (
+                <tr>
+                  <td colSpan={6} className="empty-cell">
+                    명세서 예측에 사용할 카드 지출 데이터가 없습니다.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function CardBillPaymentSection({ model }: CardsPageProps) {
   const { summary } = model;
+  const visibleCardBillPayments = summary.cardBillPayments.filter((row) => row.billAmount > 0);
 
   return (
     <Card className="transaction-panel">
@@ -177,12 +268,12 @@ function CardBillPaymentSection({ model }: CardsPageProps) {
         <CardDescription>Card Payment Beta</CardDescription>
         <div className="metric-card-top">
           <CardTitle>카드대금 상환 Beta</CardTitle>
-          <Badge tone="neutral">Read-only</Badge>
+          <Badge tone="neutral">Beta</Badge>
         </div>
       </CardHeader>
       <CardContent>
         <p className="metric-detail">
-          후잉 Bill 기준 청구액을 읽고, 기존 상환 이력으로 출금계좌를 추천합니다. 이번 단계에서는 실제 등록 버튼은 비활성화되어 있습니다.
+          후잉 Bill 기준 청구액을 읽고, 기존 상환 이력으로 출금계좌를 추천합니다. 청구금액이 0원인 카드는 제외합니다.
         </p>
 
         <div className="table-scroll">
@@ -199,7 +290,7 @@ function CardBillPaymentSection({ model }: CardsPageProps) {
               </tr>
             </thead>
             <tbody>
-              {summary.cardBillPayments.length > 0 ? summary.cardBillPayments.map((row) => {
+              {visibleCardBillPayments.length > 0 ? visibleCardBillPayments.map((row) => {
                 const status = cardPaymentStatus(row.repaymentStatus);
                 return (
                   <tr key={`${row.billMonth}:${row.cardAccountId}`}>
@@ -213,16 +304,14 @@ function CardBillPaymentSection({ model }: CardsPageProps) {
                       <div className="metric-detail">{row.statusReason}</div>
                     </td>
                     <td>
-                      <button type="button" className="ui-button ui-button-secondary ui-button-sm" disabled>
-                        {cardPaymentActionLabel(row.repaymentStatus)}
-                      </button>
+                      <CardBillPaymentAction row={row} />
                     </td>
                   </tr>
                 );
               }) : (
                 <tr>
                   <td colSpan={7} className="empty-cell">
-                    카드대금 상환 후보가 없습니다.
+                    이번 청구월에는 상환할 카드대금이 없습니다.
                   </td>
                 </tr>
               )}
