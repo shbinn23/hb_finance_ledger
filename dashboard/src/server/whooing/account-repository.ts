@@ -115,3 +115,43 @@ export async function getSlackLedgerEntryAccounts() {
     capitalAccounts: capitalAccounts.rows.map(toAccount),
   };
 }
+
+export async function expenseCategoryExists(accountId: string) {
+  const result = await query<{ exists: boolean }>(
+    `
+    select exists (
+      select 1
+      from whooing.accounts
+      where section_id = $1
+        and account_type = 'expenses'
+        and item_type = 'account'
+        and account_id = $2
+    ) as exists
+    `,
+    [sectionId, accountId],
+  );
+
+  return result.rows[0]?.exists ?? false;
+}
+
+export async function ledgerPaymentAccountExists(accountType: string, accountId: string) {
+  if (accountType !== "assets" && accountType !== "liabilities") {
+    return false;
+  }
+
+  const result = await query<{ exists: boolean }>(
+    `
+    select exists (
+      select 1
+      from whooing.accounts
+      where section_id = $1
+        and account_type = $2
+        and item_type = 'account'
+        and account_id = $3
+    ) as exists
+    `,
+    [sectionId, accountType, accountId],
+  );
+
+  return result.rows[0]?.exists ?? false;
+}
