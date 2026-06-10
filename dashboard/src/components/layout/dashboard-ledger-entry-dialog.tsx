@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { PenLine, X } from "lucide-react";
 import { todayKstDateParts } from "@/lib/kst-date";
@@ -57,6 +58,9 @@ export function DashboardLedgerEntryDialog() {
     setLoadingOptions(true);
     try {
       const response = await fetch("/api/ledger/entry-options");
+      if (!response.ok) {
+        throw new Error("entry options request failed");
+      }
       const data = await response.json() as EntryOptions;
       setOptions(data);
       setCategoryAccountId((current) => current || data.expenseCategories[0]?.accountId || "");
@@ -78,6 +82,9 @@ export function DashboardLedgerEntryDialog() {
     const value = Number(amount);
     return Number.isFinite(value) && value > 0 ? value.toLocaleString("ko-KR") : "0";
   }, [amount]);
+  const hasExpenseCategories = Boolean(options?.expenseCategories.length);
+  const hasPaymentAccounts = Boolean(options?.paymentAccounts.length);
+  const canSubmit = !submitting && !loadingOptions && hasExpenseCategories && hasPaymentAccounts;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -133,8 +140,18 @@ export function DashboardLedgerEntryDialog() {
         거래 입력
       </button>
 
-      {open ? (
-        <div className="ledger-entry-modal-backdrop" role="dialog" aria-modal="true" aria-label="거래 입력">
+      {open && typeof document !== "undefined" ? createPortal(
+        <div
+          className="ledger-entry-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="거래 입력"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setOpen(false);
+            }
+          }}
+        >
           <div className="ledger-entry-modal">
             <div className="ledger-entry-header">
               <div>
@@ -155,8 +172,11 @@ export function DashboardLedgerEntryDialog() {
               <button type="button" className="ledger-entry-tab" disabled>잔고조정</button>
             </div>
             <p className="ledger-entry-helper">수입, 이체, 카드상환, 잔고조정은 다음 단계에서 대시보드 입력을 지원합니다.</p>
+            {loadingOptions ? <p className="ledger-entry-helper">거래 입력 옵션을 불러오는 중입니다.</p> : null}
 
             {message ? <p className="ledger-entry-alert">{message}</p> : null}
+            {options && !hasExpenseCategories ? <p className="ledger-entry-alert">지출 카테고리가 없습니다. 후잉 계정 동기화 상태를 확인해 주세요.</p> : null}
+            {options && !hasPaymentAccounts ? <p className="ledger-entry-alert">결제수단이 없습니다. 자산 또는 부채 계정 동기화 상태를 확인해 주세요.</p> : null}
 
             <form className="ledger-entry-form" onSubmit={handleSubmit}>
               <label className="ledger-entry-field">
@@ -170,7 +190,7 @@ export function DashboardLedgerEntryDialog() {
                 <select
                   value={categoryAccountId}
                   onChange={(event) => setCategoryAccountId(event.target.value)}
-                  disabled={loadingOptions}
+                  disabled={loadingOptions || !hasExpenseCategories}
                   required
                 >
                   {options?.expenseCategories.map((option) => (
@@ -185,7 +205,7 @@ export function DashboardLedgerEntryDialog() {
                 <select
                   value={paymentAccountValue}
                   onChange={(event) => setPaymentAccountValue(event.target.value)}
-                  disabled={loadingOptions}
+                  disabled={loadingOptions || !hasPaymentAccounts}
                   required
                 >
                   {options?.paymentAccounts.map((option) => (
@@ -238,13 +258,14 @@ export function DashboardLedgerEntryDialog() {
                 <button type="button" className="ui-button ui-button-secondary ui-button-md" onClick={() => setOpen(false)}>
                   닫기
                 </button>
-                <button type="submit" className="ui-button ui-button-primary ui-button-md" disabled={submitting || loadingOptions}>
+                <button type="submit" className="ui-button ui-button-primary ui-button-md" disabled={!canSubmit}>
                   {submitting ? "등록 중" : "지출 등록"}
                 </button>
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );
