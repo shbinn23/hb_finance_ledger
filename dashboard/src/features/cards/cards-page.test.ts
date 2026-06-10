@@ -10,6 +10,7 @@ test("cards dashboard is split into overview benefits and bills surfaces", () =>
   const benefitsPageSource = readFileSync(resolve(srcRoot, "app/cards/benefits/page.tsx"), "utf8");
   const billsPageSource = readFileSync(resolve(srcRoot, "app/cards/bills/page.tsx"), "utf8");
   const billPaymentRouteSource = readFileSync(resolve(srcRoot, "app/api/cards/bill-payment/route.ts"), "utf8");
+  const globalCssSource = readFileSync(resolve(srcRoot, "app/globals.css"), "utf8");
   const serviceSource = readFileSync(resolve(import.meta.dirname, "service.ts"), "utf8");
   const componentSource = readFileSync(resolve(import.meta.dirname, "components/cards-page.tsx"), "utf8");
   const actionSource = readFileSync(resolve(import.meta.dirname, "components/card-bill-payment-action.tsx"), "utf8");
@@ -22,6 +23,9 @@ test("cards dashboard is split into overview benefits and bills surfaces", () =>
   assert.match(serviceSource, /카드 관리/);
   assert.match(componentSource, /CardsPageView/);
   assert.match(componentSource, /CardSectionNav/);
+  assert.doesNotMatch(componentSource, /PageNarrative/);
+  assert.doesNotMatch(componentSource, /cards-command-center/);
+  assert.doesNotMatch(componentSource, /CardsCommandLinks/);
   assert.match(componentSource, /Overview/);
   assert.match(componentSource, /혜택·실적/);
   assert.match(componentSource, /명세서·상환/);
@@ -32,6 +36,9 @@ test("cards dashboard is split into overview benefits and bills surfaces", () =>
   assert.match(componentSource, /row\.billAmount > 0/);
   assert.match(componentSource, /청구금액이 0원인 카드는 제외합니다/);
   assert.match(componentSource, /이번 청구월에는 상환할 카드대금이 없습니다/);
+  assert.match(globalCssSource, /\.page-frame[\s\S]*margin-inline: auto/);
+  assert.match(globalCssSource, /\.section-subnav[\s\S]*margin: -0\.5rem 0 1rem/);
+  assert.match(globalCssSource, /-webkit-overflow-scrolling: touch/);
   assert.match(actionSource, /상환 등록/);
   assert.match(actionSource, /\/api\/cards\/bill-payment/);
   assert.match(actionSource, /실제 은행 이체가 아니라 후잉 장부 기록/);
@@ -59,6 +66,8 @@ test("cards dashboard is split into overview benefits and bills surfaces", () =>
   assert.match(serviceSource, /데이터 경계/);
   assert.match(serviceSource, /한도 산정/);
   assert.match(serviceSource, /다음 행동/);
+  assert.match(serviceSource, /확인 모달에서 장부 기록임을 확인/);
+  assert.doesNotMatch(serviceSource, /활성화합니다/);
   assert.doesNotMatch(serviceSource, /혜택 추적 상태/);
   assert.doesNotMatch(serviceSource, /실적 데이터/);
   assert.doesNotMatch(serviceSource, /명세서 기준/);

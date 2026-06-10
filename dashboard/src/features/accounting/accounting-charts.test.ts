@@ -11,6 +11,8 @@ test("accounting page renders professional chart layer before detailed tables", 
   const chartSource = readFileSync(resolve(__dirname, "components/accounting-charts.tsx"), "utf8");
 
   assert.match(pageSource, /<AccountingCharts model=\{model\} \/>/);
+  assert.doesNotMatch(pageSource, /<PageNarrative/);
+  assert.doesNotMatch(pageSource, /accounting-report-deck/);
   assert.match(chartSource, /기간손익 추이/);
   assert.match(chartSource, /현금흐름 활동별 분해/);
   assert.match(chartSource, /자산변동 계정별 순증감/);

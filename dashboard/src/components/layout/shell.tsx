@@ -61,7 +61,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </button>
         </header>
         <div className="page-frame">
-          {children}
+          <div className="page-stack">
+            {children}
+          </div>
         </div>
       </main>
     </div>

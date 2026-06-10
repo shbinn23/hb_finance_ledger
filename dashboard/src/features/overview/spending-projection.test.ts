@@ -28,8 +28,11 @@ test("overview spending chart exposes actual-adjusted ML projection", () => {
 
 test("overview summary uses actual projection final with available resource and sync cards", () => {
   const modelSource = readFileSync(resolve(__dirname, "model.ts"), "utf8");
+  const heroSource = readFileSync(resolve(__dirname, "components/hero-summary.tsx"), "utf8");
   const globalCss = readFileSync(resolve(__dirname, "../../app/globals.css"), "utf8");
 
+  assert.match(heroSource, /Whooing Financial Command/);
+  assert.doesNotMatch(heroSource, /<PageNarrative/);
   assert.match(modelSource, /actualProjectionFinal/);
   assert.match(modelSource, /id: "available-resource"/);
   assert.match(modelSource, /label: "가용 리소스"/);
@@ -72,7 +75,8 @@ test("overview repository uses the current KST month instead of latest entry mon
   const overviewServiceSource = readFileSync(resolve(__dirname, "service.ts"), "utf8");
 
   assert.match(repositorySource, /currentKstMonthValue/);
-  assert.match(repositorySource, /const targetMonth = Number\(currentKstMonthValue\(\)\.replace\("-", ""\)\)/);
+  assert.match(repositorySource, /getWhooingOverviewSource\(month\?: string\)/);
+  assert.match(repositorySource, /const targetMonth = Number\(\(month \?\? currentKstMonthValue\(\)\)\.replace\("-", ""\)\)/);
   assert.match(repositorySource, /getDailyExpenses\(targetMonth\)/);
   assert.match(repositorySource, /getBaselineExpenses\(targetMonth\)/);
   assert.match(repositorySource, /getCategories\(targetMonth\)/);

@@ -13,6 +13,7 @@ test("section pages use page-specific side insight panels", () => {
   const typeSource = readFileSync(resolve(__dirname, "types.ts"), "utf8");
 
   assert.match(pageSource, /<RightInsightPanel model=\{model\} \/>/);
+  assert.doesNotMatch(pageSource, /<PageNarrative/);
   assert.doesNotMatch(pageSource, /<InsightPanel model=\{model\} \/>/);
 
   for (const key of ["ledger", "trend", "budget", "assets", "analysis", "habits"]) {

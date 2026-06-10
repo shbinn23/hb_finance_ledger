@@ -23,6 +23,15 @@
 
   --shadow-1: rgba(0, 55, 112, 0.08) 0 1px 3px;
   --shadow-2: rgba(0, 55, 112, 0.08) 0 8px 24px, rgba(0, 55, 112, 0.04) 0 2px 6px;
+
+  /* Layout contract: every routed page shares this coordinate system. */
+  --page-max-width: 92rem;
+  --page-padding-x: 2rem;
+  --page-padding-y: 2rem;
+  --page-section-gap: 1rem;
+  --page-main-gap: 1rem;
+  --page-rail-width: 20rem;
+  --page-hero-gap: 1rem;
 }
 
 @theme inline {
@@ -233,16 +242,33 @@ a {
 }
 
 .page-frame {
-  width: min(100%, 92rem);
-  padding: 2rem;
+  width: min(100%, var(--page-max-width));
+  margin-inline: auto;
+  padding: var(--page-padding-y) var(--page-padding-x);
+}
+
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--page-section-gap);
+}
+
+.page-stack > .section-hero,
+.page-stack > .hero-summary,
+.page-stack > .metric-grid,
+.page-stack > .insight-rail,
+.page-stack > .dashboard-grid,
+.page-stack > .section-subnav,
+.page-stack > .accounting-chart-grid,
+.page-stack > .accounting-section-grid {
+  margin-bottom: 0;
 }
 
 .hero-summary {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(22rem, 0.75fr);
-  gap: 1.5rem;
+  gap: var(--page-main-gap);
   align-items: stretch;
-  margin-bottom: 1.5rem;
 }
 
 .hero-copy,
@@ -351,8 +377,8 @@ a {
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: var(--page-main-gap);
+  margin-bottom: 0;
 }
 
 .metric-card {
@@ -451,8 +477,8 @@ a {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.34fr);
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(var(--page-rail-width), 0.34fr);
+  gap: var(--page-main-gap);
 }
 
 .dashboard-main,
@@ -460,20 +486,20 @@ a {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--page-main-gap);
 }
 
 .accounting-section-grid {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--page-main-gap);
 }
 
 .accounting-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: var(--page-main-gap);
+  margin-bottom: 0;
 }
 
 .accounting-chart-card {
@@ -788,6 +814,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+  margin: -0.5rem 0 1rem;
 }
 
 .card-action-stack {
@@ -801,6 +828,7 @@ a {
 .table-scroll {
   overflow-x: auto;
   margin: 0 -1.25rem;
+  -webkit-overflow-scrolling: touch;
 }
 
 .data-table {
@@ -822,6 +850,15 @@ a {
   border-top: 1px solid var(--hairline);
   color: var(--ink-secondary);
   padding: 0.95rem 1.25rem;
+  vertical-align: top;
+}
+
+.data-table tbody tr {
+  transition: background 140ms ease;
+}
+
+.data-table tbody tr:hover td {
+  background: rgba(246, 248, 252, 0.82);
 }
 
 .data-table .amount {
@@ -1160,11 +1197,20 @@ a {
 }
 
 .side-panel-card {
+  position: relative;
   overflow: hidden;
 }
 
+.side-panel-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, rgba(83, 58, 253, 0.72), rgba(83, 58, 253, 0.14));
+}
+
 .side-panel-card-header {
-  padding-bottom: 0.15rem;
+  padding: 1.05rem 1.1rem 0.35rem;
 }
 
 .side-panel-eyebrow {
@@ -1179,7 +1225,7 @@ a {
 }
 
 .side-panel-content {
-  padding-top: 1rem;
+  padding: 0.8rem 1.1rem 1.1rem;
 }
 
 .side-visual-card {

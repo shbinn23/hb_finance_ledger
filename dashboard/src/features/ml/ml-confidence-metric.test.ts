@@ -23,6 +23,10 @@ test("ML page uses shared right insight panel data for model interpretation", ()
 
   assert.match(typeSource, /rightInsightPanels: RightInsightPanelCard\[\]/);
   assert.match(pageSource, /<RightInsightPanel model=\{model\} \/>/);
+  assert.match(pageSource, /ml-coach/);
+  assert.match(pageSource, /Model Coach/);
+  assert.doesNotMatch(pageSource, /ml-command-center/);
+  assert.doesNotMatch(pageSource, /command-metric-strip/);
   assert.match(serviceSource, /buildMlRightInsightPanels/);
   assert.match(serviceSource, /모델 경계/);
   assert.match(serviceSource, /실제 vs ML/);
