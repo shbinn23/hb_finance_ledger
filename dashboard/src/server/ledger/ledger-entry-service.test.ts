@@ -28,6 +28,11 @@ function dependencies(overrides: Partial<DashboardLedgerEntryDependencies> = {})
       (accountType === "assets" && accountId === "x3")
       || (accountType === "liabilities" && accountId === "x45")
     ),
+    assertIncomeCategory: async (accountId) => accountId === "i1",
+    assertAssetAccount: async (accountId) => accountId === "x3" || accountId === "x4",
+    assertLiabilityAccount: async (accountId) => accountId === "x45",
+    assertCreditCardAccount: async (accountId) => accountId === "x45",
+    assertCapitalAccount: async (accountId) => accountId === "c1",
     getActiveCardBenefitRules: async () => [],
     buildCardBenefitMonthlyContext: async (benefitMonth) => ({
       benefitMonth,
@@ -41,15 +46,38 @@ function dependencies(overrides: Partial<DashboardLedgerEntryDependencies> = {})
   };
 }
 
-test("createDashboardLedgerEntry rejects non-expense entry types in the dashboard MVP", async () => {
+test("createDashboardLedgerEntry posts an income entry and syncs the entry date", async () => {
+  const createdPayloads: unknown[] = [];
+
   const result = await createDashboardLedgerEntry({
-    request: validExpense({ type: "income" }),
+    request: validExpense({
+      type: "income",
+      incomeAccountId: "i1",
+      depositAccountId: "x3",
+      item: "캐시백",
+      amount: 190000,
+    }),
     sectionId: "s1",
-    dependencies: dependencies(),
+    dependencies: dependencies({
+      createEntry: async (payload) => {
+        createdPayloads.push(payload);
+        return { results: { entry_id: 1426002 } };
+      },
+    }),
   });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, "unsupported_type");
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdPayloads, [{
+    section_id: "s1",
+    entry_date: "20260610",
+    l_account: "assets",
+    l_account_id: "x3",
+    r_account: "income",
+    r_account_id: "i1",
+    item: "캐시백",
+    money: 190000,
+    memo: "메모",
+  }]);
 });
 
 test("createDashboardLedgerEntry rejects invalid expense amounts", async () => {
@@ -135,4 +163,125 @@ test("createDashboardLedgerEntry keeps a successful entry when best-effort sync 
 
   assert.equal(result.ok, true);
   assert.equal(result.syncStatus, "pending");
+});
+
+test("createDashboardLedgerEntry posts a transfer entry with the Slack transfer direction", async () => {
+  const createdPayloads: unknown[] = [];
+
+  const result = await createDashboardLedgerEntry({
+    request: validExpense({
+      type: "transfer",
+      fromAccountId: "x3",
+      toAccountId: "x4",
+      item: "계좌이체",
+      amount: 10000,
+    }),
+    sectionId: "s1",
+    dependencies: dependencies({
+      createEntry: async (payload) => {
+        createdPayloads.push(payload);
+        return { results: { entry_id: 1426003 } };
+      },
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdPayloads, [{
+    section_id: "s1",
+    entry_date: "20260610",
+    l_account: "assets",
+    l_account_id: "x4",
+    r_account: "assets",
+    r_account_id: "x3",
+    item: "계좌이체",
+    money: 10000,
+    memo: "메모",
+  }]);
+});
+
+test("createDashboardLedgerEntry rejects transfer between the same account", async () => {
+  const result = await createDashboardLedgerEntry({
+    request: validExpense({
+      type: "transfer",
+      fromAccountId: "x3",
+      toAccountId: "x3",
+      item: "계좌이체",
+    }),
+    sectionId: "s1",
+    dependencies: dependencies(),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "invalid_request");
+  assert.equal(result.fieldErrors.toAccountId, "출금 계정과 입금 계정은 달라야 합니다.");
+});
+
+test("createDashboardLedgerEntry posts a card payment entry", async () => {
+  const createdPayloads: unknown[] = [];
+
+  const result = await createDashboardLedgerEntry({
+    request: validExpense({
+      type: "card_payment",
+      cardAccountId: "x45",
+      assetAccountId: "x3",
+      item: "",
+      amount: 299010,
+    }),
+    sectionId: "s1",
+    dependencies: dependencies({
+      createEntry: async (payload) => {
+        createdPayloads.push(payload);
+        return { results: { entry_id: 1426004 } };
+      },
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdPayloads, [{
+    section_id: "s1",
+    entry_date: "20260610",
+    l_account: "liabilities",
+    l_account_id: "x45",
+    r_account: "assets",
+    r_account_id: "x3",
+    item: "카드대금 상환",
+    money: 299010,
+    memo: "메모",
+  }]);
+});
+
+test("createDashboardLedgerEntry posts a balance adjustment entry", async () => {
+  const createdPayloads: unknown[] = [];
+
+  const result = await createDashboardLedgerEntry({
+    request: validExpense({
+      type: "balance_adjustment",
+      targetAccountType: "assets",
+      targetAccountId: "x3",
+      adjustmentDirection: "increase",
+      capitalAccountId: "c1",
+      item: "초기 잔액 보정",
+      amount: 50000,
+    }),
+    sectionId: "s1",
+    dependencies: dependencies({
+      createEntry: async (payload) => {
+        createdPayloads.push(payload);
+        return { results: { entry_id: 1426005 } };
+      },
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(createdPayloads, [{
+    section_id: "s1",
+    entry_date: "20260610",
+    l_account: "assets",
+    l_account_id: "x3",
+    r_account: "capital",
+    r_account_id: "c1",
+    item: "잔고조정",
+    money: 50000,
+    memo: "잔고조정 / 사유: 초기 잔액 보정 / 방향: 증가 / 메모",
+  }]);
 });

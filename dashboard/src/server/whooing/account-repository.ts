@@ -14,6 +14,7 @@ interface AccountDbRow {
   account_id: string;
   item_type: "group" | "account";
   title: string;
+  category: string | null;
   sort_order: number | null;
 }
 
@@ -48,7 +49,7 @@ export async function getSlackLedgerEntryAccounts() {
   const [expenseCategories, assetAccounts, liabilityAccounts, incomeCategories, capitalAccounts] = await Promise.all([
     query<AccountDbRow>(
       `
-      select account_type, account_id, item_type, title, sort_order
+      select account_type, account_id, item_type, title, category, sort_order
       from whooing.accounts
       where section_id = $1
         and account_type = 'expenses'
@@ -58,7 +59,7 @@ export async function getSlackLedgerEntryAccounts() {
     ),
     query<AccountDbRow>(
       `
-      select account_type, account_id, item_type, title, sort_order
+      select account_type, account_id, item_type, title, category, sort_order
       from whooing.accounts
       where section_id = $1
         and item_type = 'account'
@@ -69,7 +70,7 @@ export async function getSlackLedgerEntryAccounts() {
     ),
     query<AccountDbRow>(
       `
-      select account_type, account_id, item_type, title, sort_order
+      select account_type, account_id, item_type, title, category, sort_order
       from whooing.accounts
       where section_id = $1
         and item_type = 'account'
@@ -80,7 +81,7 @@ export async function getSlackLedgerEntryAccounts() {
     ),
     query<AccountDbRow>(
       `
-      select account_type, account_id, item_type, title, sort_order
+      select account_type, account_id, item_type, title, category, sort_order
       from whooing.accounts
       where section_id = $1
         and item_type = 'account'
@@ -91,7 +92,7 @@ export async function getSlackLedgerEntryAccounts() {
     ),
     query<AccountDbRow>(
       `
-      select account_type, account_id, item_type, title, sort_order
+      select account_type, account_id, item_type, title, category, sort_order
       from whooing.accounts
       where section_id = $1
         and item_type = 'account'
@@ -104,6 +105,9 @@ export async function getSlackLedgerEntryAccounts() {
 
   const assetOptions = assetAccounts.rows.map(toAccount);
   const liabilityOptions = liabilityAccounts.rows.map(toAccount);
+  const creditCardOptions = liabilityAccounts.rows
+    .filter((row) => row.category === "creditcard")
+    .map(toAccount);
 
   return {
     expenseCategories: toGroupedExpenseAccounts(expenseCategories.rows),
@@ -112,6 +116,7 @@ export async function getSlackLedgerEntryAccounts() {
     depositAccounts: [...assetOptions, ...liabilityOptions],
     assetAccounts: assetOptions,
     liabilityAccounts: liabilityOptions,
+    creditCardAccounts: creditCardOptions,
     capitalAccounts: capitalAccounts.rows.map(toAccount),
   };
 }
@@ -154,4 +159,43 @@ export async function ledgerPaymentAccountExists(accountType: string, accountId:
   );
 
   return result.rows[0]?.exists ?? false;
+}
+
+async function ledgerAccountExists(accountType: WhooingLedgerAccountType, accountId: string, category?: string) {
+  const result = await query<{ exists: boolean }>(
+    `
+    select exists (
+      select 1
+      from whooing.accounts
+      where section_id = $1
+        and account_type = $2
+        and item_type = 'account'
+        and account_id = $3
+        and ($4::text is null or category = $4)
+    ) as exists
+    `,
+    [sectionId, accountType, accountId, category ?? null],
+  );
+
+  return result.rows[0]?.exists ?? false;
+}
+
+export async function incomeCategoryExists(accountId: string) {
+  return ledgerAccountExists("income", accountId);
+}
+
+export async function assetAccountExists(accountId: string) {
+  return ledgerAccountExists("assets", accountId);
+}
+
+export async function liabilityAccountExists(accountId: string) {
+  return ledgerAccountExists("liabilities", accountId);
+}
+
+export async function creditCardAccountExists(accountId: string) {
+  return ledgerAccountExists("liabilities", accountId, "creditcard");
+}
+
+export async function capitalAccountExists(accountId: string) {
+  return ledgerAccountExists("capital", accountId);
 }

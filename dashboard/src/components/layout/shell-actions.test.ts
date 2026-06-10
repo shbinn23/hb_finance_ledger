@@ -27,9 +27,10 @@ test("dashboard expense entry dialog exposes the expense form and pending entry 
   for (const label of ["지출", "날짜", "지출 카테고리", "결제수단", "항목명", "금액", "메모", "카드혜택"]) {
     assert.match(dialogSource, new RegExp(label));
   }
-  for (const label of ["수입", "이체", "카드상환", "잔고조정", "다음 단계"]) {
+  for (const label of ["수입", "이체", "카드상환", "잔고조정", "수입 등록", "이체 등록", "카드상환 등록", "잔고조정 등록"]) {
     assert.match(dialogSource, new RegExp(label));
   }
+  assert.doesNotMatch(dialogSource, /ledger-entry-tab" disabled/);
 });
 
 test("dashboard expense entry dialog is portaled outside the filtered topbar", () => {

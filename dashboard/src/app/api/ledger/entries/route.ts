@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDashboardLedgerEntry, type DashboardLedgerEntryRequest } from "@/server/ledger/ledger-entry-service";
 import {
+  assetAccountExists,
+  capitalAccountExists,
+  creditCardAccountExists,
   expenseCategoryExists,
+  incomeCategoryExists,
   ledgerPaymentAccountExists,
+  liabilityAccountExists,
 } from "@/server/whooing/account-repository";
 import {
   buildCardBenefitMonthlyContext,
@@ -35,6 +40,11 @@ export async function POST(request: NextRequest) {
     dependencies: {
       assertExpenseCategory: expenseCategoryExists,
       assertPaymentAccount: ledgerPaymentAccountExists,
+      assertIncomeCategory: incomeCategoryExists,
+      assertAssetAccount: assetAccountExists,
+      assertLiabilityAccount: liabilityAccountExists,
+      assertCreditCardAccount: creditCardAccountExists,
+      assertCapitalAccount: capitalAccountExists,
       getActiveCardBenefitRules,
       buildCardBenefitMonthlyContext,
       createEntry: createWhooingEntry,
