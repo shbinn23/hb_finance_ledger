@@ -12,6 +12,7 @@ import {
 } from "@/lib/card-benefits/card-bill-payment";
 import {
   calculateBenefitCapStatus,
+  calculateCardPerformanceEstimate,
   calculateCardStatementEstimate,
   savingRate,
   type BenefitCapAutoStatus,
@@ -187,6 +188,7 @@ export interface CardStatementEstimateRow extends CardStatementEstimate {
   cardAccountId: string;
   cardName: string;
   structuredPerformanceTotal: number;
+  performanceEstimate: number;
   structuredCount: number;
   legacyCount: number;
 }
@@ -913,20 +915,30 @@ export async function getCardBenefitMonthlyAssetsSummary(month?: string | null):
       discountAmount: numberFromDb(row.applied_discount_amount),
       postingAmount: numberFromDb(row.posting_amount),
     })),
-    statementEstimates: statementEstimates.rows.map((row) => ({
-      cardAccountType: row.card_account_type,
-      cardAccountId: row.card_account_id,
-      cardName: displayCardName(row.card_account_type, row.card_account_id, row.card_title),
-      structuredCount: Number(row.structured_count),
-      legacyCount: Number(row.legacy_count),
-      structuredPerformanceTotal: numberFromDb(row.structured_performance_total),
-      ...calculateCardStatementEstimate({
+    statementEstimates: statementEstimates.rows.map((row) => {
+      const structuredPerformanceTotal = numberFromDb(row.structured_performance_total);
+      const statementEstimate = calculateCardStatementEstimate({
         structuredApprovalTotal: numberFromDb(row.structured_approval_total),
         structuredPostingTotal: numberFromDb(row.structured_posting_total),
         structuredDiscountTotal: numberFromDb(row.structured_discount_total),
         legacyPostingTotal: numberFromDb(row.legacy_posting_total),
-      }),
-    })),
+      });
+      const performanceEstimate = calculateCardPerformanceEstimate({
+        ...statementEstimate,
+        structuredPerformanceTotal,
+      });
+
+      return {
+        cardAccountType: row.card_account_type,
+        cardAccountId: row.card_account_id,
+        cardName: displayCardName(row.card_account_type, row.card_account_id, row.card_title),
+        structuredCount: Number(row.structured_count),
+        legacyCount: Number(row.legacy_count),
+        structuredPerformanceTotal,
+        performanceEstimate: performanceEstimate.performanceEstimate,
+        ...statementEstimate,
+      };
+    }),
   };
 }
 

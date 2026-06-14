@@ -1,5 +1,4 @@
 export type StatementDataQuality = "structured" | "partial_estimate" | "legacy_estimate" | "no_data";
-export type PerformanceDataQuality = "structured" | "no_data";
 export type BenefitCapAutoStatus = "ready" | "unknown" | "not_applicable";
 
 export interface CardStatementEstimateInput {
@@ -10,6 +9,7 @@ export interface CardStatementEstimateInput {
 }
 
 export interface CardStatementEstimate extends CardStatementEstimateInput {
+  approvalEstimateTotal: number;
   statementEstimate: number;
   effectiveSpend: number;
   statementVsEffectiveDelta: number;
@@ -26,8 +26,8 @@ export interface CardPerformanceEstimateInput {
 
 export interface CardPerformanceEstimate extends CardPerformanceEstimateInput {
   performanceEstimate: number;
-  excludedLegacyPostingTotal: number;
-  dataQuality: PerformanceDataQuality;
+  legacyPerformanceEstimateTotal: number;
+  dataQuality: StatementDataQuality;
 }
 
 export interface BenefitCapTier {
@@ -56,6 +56,7 @@ export function savingRate(appliedDiscountAmount: number, approvalAmount: number
 export function calculateCardStatementEstimate(
   input: CardStatementEstimateInput,
 ): CardStatementEstimate {
+  const approvalEstimateTotal = input.structuredApprovalTotal + input.legacyPostingTotal;
   const statementEstimate = input.structuredPostingTotal + input.legacyPostingTotal;
   const effectiveSpend = statementEstimate;
   const statementVsEffectiveDelta = statementEstimate - effectiveSpend;
@@ -63,6 +64,7 @@ export function calculateCardStatementEstimate(
 
   return {
     ...input,
+    approvalEstimateTotal,
     statementEstimate,
     effectiveSpend,
     statementVsEffectiveDelta,
@@ -73,11 +75,14 @@ export function calculateCardStatementEstimate(
 export function calculateCardPerformanceEstimate(
   input: CardPerformanceEstimateInput,
 ): CardPerformanceEstimate {
+  const legacyPerformanceEstimateTotal = input.legacyPostingTotal;
+  const performanceEstimate = input.structuredPerformanceTotal + legacyPerformanceEstimateTotal;
+
   return {
     ...input,
-    performanceEstimate: input.structuredPerformanceTotal,
-    excludedLegacyPostingTotal: input.legacyPostingTotal,
-    dataQuality: input.structuredPerformanceTotal > 0 ? "structured" : "no_data",
+    performanceEstimate,
+    legacyPerformanceEstimateTotal,
+    dataQuality: statementDataQuality(input.structuredPerformanceTotal, input.legacyPostingTotal),
   };
 }
 

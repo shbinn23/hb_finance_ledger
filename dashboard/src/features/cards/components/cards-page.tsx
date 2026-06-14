@@ -156,6 +156,7 @@ function CardSummarySection({ model, compact = false }: CardsPageProps & { compa
       <CardContent>
         <p className="metric-detail">
           {summary.monthLabel} 기준으로 실적, 명세서·매입금액, 혜택 적용액을 카드별로 함께 비교합니다.
+          구조화되지 않은 기존 카드 지출은 매입금액을 승인·실적의 보수 추정치로 사용합니다.
         </p>
 
         <div className="table-scroll">
@@ -178,8 +179,8 @@ function CardSummarySection({ model, compact = false }: CardsPageProps & { compa
                   return (
                     <tr key={`${row.cardAccountType}:${row.cardAccountId}`}>
                       <td>{row.cardName}</td>
-                      <td className="amount">{won(row.structuredApprovalTotal)}</td>
-                      <td className="amount">{won(row.structuredPerformanceTotal)}</td>
+                      <td className="amount">{won(row.approvalEstimateTotal)}</td>
+                      <td className="amount">{won(row.performanceEstimate)}</td>
                       <td className="amount">{won(row.statementEstimate)}</td>
                       <td className="amount">{won(row.structuredDiscountTotal)}</td>
                       <td className="amount">{row.structuredCount.toLocaleString("ko-KR")}건</td>

@@ -23,6 +23,7 @@ test("calculateCardStatementEstimate uses posting amount for statement estimate 
   assert.equal(estimate.statementEstimate, 29_000);
   assert.equal(estimate.effectiveSpend, 29_000);
   assert.equal(estimate.statementVsEffectiveDelta, 0);
+  assert.equal(estimate.approvalEstimateTotal, 30_000);
   assert.equal(estimate.dataQuality, "partial_estimate");
 });
 
@@ -47,7 +48,7 @@ test("calculateCardStatementEstimate classifies statement data quality", () => {
   }).dataQuality, "no_data");
 });
 
-test("calculateCardPerformanceEstimate uses performance amount and excludes legacy posting", () => {
+test("calculateCardPerformanceEstimate uses structured performance and legacy posting as a conservative estimate", () => {
   const estimate = calculateCardPerformanceEstimate({
     structuredPerformanceTotal: 8_000,
     structuredApprovalTotal: 10_000,
@@ -56,12 +57,12 @@ test("calculateCardPerformanceEstimate uses performance amount and excludes lega
     legacyPostingTotal: 20_000,
   });
 
-  assert.equal(estimate.performanceEstimate, 8_000);
+  assert.equal(estimate.performanceEstimate, 28_000);
   assert.equal(estimate.structuredApprovalTotal, 10_000);
   assert.equal(estimate.structuredPostingTotal, 9_000);
   assert.equal(estimate.structuredDiscountTotal, 1_000);
-  assert.equal(estimate.excludedLegacyPostingTotal, 20_000);
-  assert.equal(estimate.dataQuality, "structured");
+  assert.equal(estimate.legacyPerformanceEstimateTotal, 20_000);
+  assert.equal(estimate.dataQuality, "partial_estimate");
 });
 
 test("statement and performance helpers keep the combined card summary axes separate", () => {
@@ -78,11 +79,12 @@ test("statement and performance helpers keep the combined card summary axes sepa
   });
 
   assert.equal(statement.statementEstimate, 29_000);
-  assert.equal(performance.performanceEstimate, 10_000);
-  assert.equal(performance.excludedLegacyPostingTotal, 20_000);
+  assert.equal(statement.approvalEstimateTotal, 30_000);
+  assert.equal(performance.performanceEstimate, 30_000);
+  assert.equal(performance.legacyPerformanceEstimateTotal, 20_000);
 });
 
-test("calculateCardPerformanceEstimate returns no_data without structured performance", () => {
+test("calculateCardPerformanceEstimate uses legacy posting when structured performance is missing", () => {
   const estimate = calculateCardPerformanceEstimate({
     structuredPerformanceTotal: 0,
     structuredApprovalTotal: 0,
@@ -91,9 +93,9 @@ test("calculateCardPerformanceEstimate returns no_data without structured perfor
     legacyPostingTotal: 20_000,
   });
 
-  assert.equal(estimate.performanceEstimate, 0);
-  assert.equal(estimate.excludedLegacyPostingTotal, 20_000);
-  assert.equal(estimate.dataQuality, "no_data");
+  assert.equal(estimate.performanceEstimate, 20_000);
+  assert.equal(estimate.legacyPerformanceEstimateTotal, 20_000);
+  assert.equal(estimate.dataQuality, "legacy_estimate");
 });
 
 test("calculateBenefitCapStatus marks cap unknown without previous structured performance", () => {

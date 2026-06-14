@@ -4,7 +4,7 @@ import type { RightInsightPanelCard, SectionMetric } from "@/features/sections/t
 import type { CardsViewModel } from "./types";
 
 function structuredPerformanceTotal(summary: CardsViewModel["summary"]) {
-  return summary.statementEstimates.reduce((sum, row) => sum + row.structuredPerformanceTotal, 0);
+  return summary.statementEstimates.reduce((sum, row) => sum + row.performanceEstimate, 0);
 }
 
 function buildMetrics(summary: CardsViewModel["summary"]): SectionMetric[] {
