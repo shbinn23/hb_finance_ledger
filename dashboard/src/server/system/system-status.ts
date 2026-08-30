@@ -11,7 +11,9 @@ export interface ImportOperationsStatus {
   supported: boolean;
   latestBatchId: number | null;
   latestBatchStatus: string | null;
+  latestFilename: string | null;
   sourceFileHash: string | null;
+  normalizedCount: number;
   reviewRequiredCount: number;
   benefitApprovalCandidateCount: number;
   benefitEventExistsCount: number;
@@ -22,7 +24,13 @@ export interface SystemStatusDependencies {
   getMirrorActivity: () => Promise<MirrorActivity>;
   getImportOperationsStatus?: () => Promise<ImportOperationsStatus>;
   now?: () => Date;
-  getGmailImportStatus?: () => {
+  getGmailImportStatus?: () => Promise<{
+    enabled: boolean;
+    state: "disabled" | "needs_credentials" | "ready";
+    credentialsConfigured: boolean;
+    dryRunOnly: boolean;
+    label: string | null;
+  }> | {
     enabled: boolean;
     state: "disabled" | "needs_credentials" | "ready";
     credentialsConfigured: boolean;
@@ -94,17 +102,26 @@ export async function getSystemStatus(
 ): Promise<SystemStatus> {
   const now = dependencies.now?.() ?? new Date();
   const thresholdHours = getMirrorFreshnessThresholdHours();
-  const [etlStatus, mirror, importOperations] = await Promise.all([
+  const [etlStatus, mirror, importOperations, gmailImport] = await Promise.all([
     dependencies.checkEtlHealth(),
     dependencies.getMirrorActivity(),
     dependencies.getImportOperationsStatus?.() ?? Promise.resolve({
       supported: false,
       latestBatchId: null,
       latestBatchStatus: null,
+      latestFilename: null,
       sourceFileHash: null,
+      normalizedCount: 0,
       reviewRequiredCount: 0,
       benefitApprovalCandidateCount: 0,
       benefitEventExistsCount: 0,
+    }),
+    dependencies.getGmailImportStatus?.() ?? Promise.resolve({
+      enabled: false,
+      state: "disabled" as const,
+      credentialsConfigured: false,
+      dryRunOnly: true,
+      label: null,
     }),
   ]);
 
@@ -119,13 +136,7 @@ export async function getSystemStatus(
     },
     pendingSyncCount: mirror.pendingSyncCount,
     pendingSyncSupported: mirror.pendingSyncCount !== null,
-    gmailImport: dependencies.getGmailImportStatus?.() ?? {
-      enabled: false,
-      state: "disabled",
-      credentialsConfigured: false,
-      dryRunOnly: true,
-      label: null,
-    },
+    gmailImport,
     importOperations,
   };
 }

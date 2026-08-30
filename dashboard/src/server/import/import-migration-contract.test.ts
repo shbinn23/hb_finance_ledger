@@ -61,6 +61,13 @@ test("prior import reconciliation only trusts rows backed by ledger evidence", (
   assert.match(importRepository, /row_id = excluded\.row_id/);
 });
 
+test("import batch persistence is atomic and serializes source-file deduplication", () => {
+  assert.match(importRepository, /withTransaction/);
+  assert.match(importRepository, /pg_advisory_xact_lock/);
+  assert.match(importRepository, /source_file_hash = \$1/);
+  assert.match(importRepository, /b\.status in \('review', 'pending', 'applying', 'completed', 'partial'\)/);
+});
+
 test("benefit review migration is additive, transactional, and links import rows to events", () => {
   assert.match(importBenefitReview, /^begin;/i);
   assert.match(importBenefitReview, /add column if not exists benefit_status text/);

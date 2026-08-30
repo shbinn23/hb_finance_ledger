@@ -113,7 +113,7 @@ test("gmail poller delegates each mock attachment through the deduplicating hand
   const results = await pollGmailAttachmentsOnce({
     adapter: { listAttachments: async (query) => {
       assert.match(query, /filename:xlsx/);
-      return [attachment];
+      return { checkedMessages: 1, attachments: [attachment] };
     } },
     query: buildGmailImportQuery({}),
     wasProcessed: async () => false,
@@ -121,8 +121,9 @@ test("gmail poller delegates each mock attachment through the deduplicating hand
     importAttachment: async () => ({ batchId: 7 }),
   });
 
-  assert.equal(results.length, 1);
-  assert.equal(results[0].status, "handed_off");
+  assert.equal(results.checkedMessages, 1);
+  assert.equal(results.results.length, 1);
+  assert.equal(results.results[0].status, "handed_off");
 });
 
 test("configured gmail poller fails closed before invoking an adapter", async () => {
@@ -130,7 +131,7 @@ test("configured gmail poller fails closed before invoking an adapter", async ()
   const dependencies = {
     adapter: { listAttachments: async () => {
       adapterCalls += 1;
-      return [attachment];
+      return { checkedMessages: 1, attachments: [attachment] };
     } },
     wasProcessed: async () => false,
     wasSourceFileProcessed: async () => false,
@@ -158,7 +159,7 @@ test("configured gmail poller invokes a mock adapter only when ready", async () 
     },
     adapter: { listAttachments: async () => {
       adapterCalls += 1;
-      return [attachment];
+      return { checkedMessages: 1, attachments: [attachment] };
     } },
     wasProcessed: async () => false,
     wasSourceFileProcessed: async () => false,
@@ -166,6 +167,6 @@ test("configured gmail poller invokes a mock adapter only when ready", async () 
   });
 
   assert.equal(result.status, "polled");
-  assert.equal(result.results.length, 1);
+  assert.equal(result.results.results.length, 1);
   assert.equal(adapterCalls, 1);
 });

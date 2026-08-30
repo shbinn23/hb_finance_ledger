@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Pool, type QueryResultRow } from "pg";
+import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 type PgGlobal = typeof globalThis & {
   __piggyLedgerPool?: Pool;
@@ -51,4 +51,25 @@ function getPool() {
 
 export async function query<T extends QueryResultRow>(sql: string, params: unknown[] = []) {
   return getPool().query<T>(sql, params);
+}
+
+export type DatabaseQuery = <T extends QueryResultRow>(
+  sql: string,
+  params?: unknown[],
+) => Promise<QueryResult<T>>;
+
+export async function withTransaction<T>(work: (transactionQuery: DatabaseQuery) => Promise<T>) {
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    const transactionQuery: DatabaseQuery = (sql, params = []) => client.query(sql, params);
+    const result = await work(transactionQuery);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

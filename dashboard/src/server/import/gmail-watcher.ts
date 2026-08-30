@@ -8,7 +8,10 @@ export interface GmailAttachmentEnvelope {
 }
 
 export interface GmailWatcherAdapter {
-  listAttachments: (query: string) => Promise<GmailAttachmentEnvelope[]>;
+  listAttachments: (query: string) => Promise<{
+    checkedMessages: number;
+    attachments: GmailAttachmentEnvelope[];
+  }>;
 }
 
 export const GMAIL_IMPORT_ENABLED_ENV = "GMAIL_IMPORT_ENABLED";
@@ -42,7 +45,10 @@ function gmailPollInterval(env: GmailImportEnv) {
     : DEFAULT_GMAIL_IMPORT_POLL_INTERVAL_MS;
 }
 
-export function getGmailImportRuntimeStatus(env: GmailImportEnv = process.env): GmailImportRuntimeStatus {
+export function getGmailImportRuntimeStatus(
+  env: GmailImportEnv = process.env,
+  inferCredentials = true,
+): GmailImportRuntimeStatus {
   const enabled = env[GMAIL_IMPORT_ENABLED_ENV]?.toLowerCase() === "true";
   const credentialFiles = Boolean(env.GMAIL_CREDENTIALS_FILE && env.GMAIL_TOKEN_FILE);
   const explicitOAuth = Boolean(
@@ -50,7 +56,7 @@ export function getGmailImportRuntimeStatus(env: GmailImportEnv = process.env): 
     && env.GMAIL_OAUTH_CLIENT_SECRET
     && env.GMAIL_OAUTH_REFRESH_TOKEN,
   );
-  const credentialsConfigured = credentialFiles || explicitOAuth;
+  const credentialsConfigured = inferCredentials && (credentialFiles || explicitOAuth);
   return {
     enabled,
     state: !enabled ? "disabled" : credentialsConfigured ? "ready" : "needs_credentials",
@@ -97,12 +103,12 @@ export async function pollGmailAttachmentsOnce<T>(input: {
   wasSourceFileProcessed: (sourceFileHash: string) => Promise<boolean>;
   importAttachment: (attachment: GmailAttachmentEnvelope) => Promise<T>;
 }) {
-  const attachments = await input.adapter.listAttachments(input.query);
+  const search = await input.adapter.listAttachments(input.query);
   const results = [];
-  for (const attachment of attachments) {
+  for (const attachment of search.attachments) {
     results.push(await processGmailAttachment(attachment, input));
   }
-  return results;
+  return { checkedMessages: search.checkedMessages, results };
 }
 
 export async function pollConfiguredGmailAttachmentsOnce<T>(input: {

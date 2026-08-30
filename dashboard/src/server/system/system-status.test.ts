@@ -24,7 +24,9 @@ function dependencies(
       supported: true,
       latestBatchId: 1,
       latestBatchStatus: "review",
+      latestFilename: "2026-08.xlsx",
       sourceFileHash: "a".repeat(64),
+      normalizedCount: 200,
       reviewRequiredCount: 190,
       benefitApprovalCandidateCount: 0,
       benefitEventExistsCount: 36,
@@ -85,7 +87,9 @@ test("getSystemStatus keeps ETL and mirror state independent", async () => {
       supported: true,
       latestBatchId: 1,
       latestBatchStatus: "review",
+      latestFilename: "2026-08.xlsx",
       sourceFileHash: "a".repeat(64),
+      normalizedCount: 200,
       reviewRequiredCount: 190,
       benefitApprovalCandidateCount: 0,
       benefitEventExistsCount: 36,
@@ -118,9 +122,26 @@ test("getSystemStatus reports import operations as unsupported defensively", asy
     supported: false,
     latestBatchId: null,
     latestBatchStatus: null,
+    latestFilename: null,
     sourceFileHash: null,
+    normalizedCount: 0,
     reviewRequiredCount: 0,
     benefitApprovalCandidateCount: 0,
     benefitEventExistsCount: 0,
   });
+});
+
+test("getSystemStatus awaits a safely classified Gmail credential state", async () => {
+  const result = await getSystemStatus(dependencies({
+    getGmailImportStatus: async () => ({
+      enabled: true,
+      state: "needs_credentials",
+      credentialsConfigured: false,
+      dryRunOnly: true,
+      label: "personal-gmail",
+    }),
+  }));
+
+  assert.equal(result.gmailImport.state, "needs_credentials");
+  assert.equal(result.gmailImport.label, "personal-gmail");
 });

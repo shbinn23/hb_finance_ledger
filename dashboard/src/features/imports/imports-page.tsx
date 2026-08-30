@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, FileSpreadsheet, Upload } from "lucide-react";
+import { AlertTriangle, FileSpreadsheet, MailSearch, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -86,6 +86,9 @@ interface ImportRuntimeStatus {
     supported: boolean;
     latestBatchId: number | null;
     latestBatchStatus: string | null;
+    latestFilename: string | null;
+    sourceFileHash: string | null;
+    normalizedCount: number;
     reviewRequiredCount: number;
     benefitApprovalCandidateCount: number;
     benefitEventExistsCount: number;
@@ -123,16 +126,36 @@ export function ImportsPage() {
   const [result, setResult] = useState<DryRunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyBenefitRowId, setBusyBenefitRowId] = useState<number | null>(null);
+  const [gmailBusy, setGmailBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [statusFilter, setStatusFilter] = useState<ImportStatus | "all">("all");
   const [runtimeStatus, setRuntimeStatus] = useState<ImportRuntimeStatus | null>(null);
 
-  useEffect(() => {
-    fetch("/api/system/status", { cache: "no-store" })
+  function refreshRuntimeStatus() {
+    return fetch("/api/system/status", { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: ImportRuntimeStatus) => setRuntimeStatus(payload))
       .catch(() => setRuntimeStatus(null));
+  }
+
+  useEffect(() => {
+    void refreshRuntimeStatus();
   }, []);
+
+  async function pollGmail() {
+    setGmailBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/imports/gmail/poll", { method: "POST" });
+      const payload = await response.json() as { message?: string };
+      setMessage(payload.message ?? "Gmail dry-run 확인을 마쳤습니다.");
+      if (response.ok) await refreshRuntimeStatus();
+    } catch {
+      setMessage("Gmail read-only 확인 중 오류가 발생했습니다.");
+    } finally {
+      setGmailBusy(false);
+    }
+  }
 
   async function fileRequest(path: string, mode: "dry-run" | "review" | "apply") {
     if (!file) {
@@ -262,9 +285,21 @@ export function ImportsPage() {
               <Upload size={15} />{busy ? "처리 중" : "dry-run 비교"}
             </Button>
           </div>
-          <p className="metric-detail">Gmail 자동 감지: {gmailLabel} · {runtimeStatus?.gmailImport.dryRunOnly ?? true ? "dry-run only" : "write 허용"}. 5MB 이하 편한가계부 .xlsx 파일을 사용하세요.</p>
+          <div className="import-upload-row">
+            <div>
+              <p className="metric-detail">Gmail 자동 감지: {gmailLabel} · {runtimeStatus?.gmailImport.dryRunOnly ?? true ? "dry-run only" : "write 허용"}.</p>
+              <p className="metric-detail">메일과 첨부를 읽기만 하며 후잉 원장은 변경하지 않습니다. 5MB 이하 편한가계부 .xlsx 파일을 사용하세요.</p>
+            </div>
+            <Button
+              variant="secondary"
+              disabled={gmailBusy || gmailState !== "ready" || runtimeStatus?.gmailImport.dryRunOnly === false}
+              onClick={pollGmail}
+            >
+              <MailSearch size={15} />{gmailBusy ? "확인 중" : "Gmail dry-run 확인"}
+            </Button>
+          </div>
           <p className="metric-detail">최근 import batch: {runtimeStatus?.importOperations.latestBatchId
-            ? `#${runtimeStatus.importOperations.latestBatchId} · ${runtimeStatus.importOperations.latestBatchStatus} · 승인 후보 ${runtimeStatus.importOperations.benefitApprovalCandidateCount}건 · 기존 event ${runtimeStatus.importOperations.benefitEventExistsCount}건`
+            ? `#${runtimeStatus.importOperations.latestBatchId} · ${runtimeStatus.importOperations.latestBatchStatus} · ${runtimeStatus.importOperations.latestFilename ?? "파일명 없음"} · 해시 ${runtimeStatus.importOperations.sourceFileHash?.slice(0, 8) ?? "-"}… · 정규화 ${runtimeStatus.importOperations.normalizedCount}건 · 검토 필요 ${runtimeStatus.importOperations.reviewRequiredCount}건 · 승인 후보 ${runtimeStatus.importOperations.benefitApprovalCandidateCount}건 · 기존 event ${runtimeStatus.importOperations.benefitEventExistsCount}건`
             : "없음"}</p>
           {message ? <p className="import-feedback" role="status">{message}</p> : null}
         </CardContent>

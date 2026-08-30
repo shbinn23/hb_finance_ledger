@@ -28,8 +28,13 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /수입 의미가 섞여 있어 수동 정책 필요/);
   assert.match(source, /자동 삭제는 수행하지 않음/);
   assert.match(source, /Gmail 자동 감지/);
+  assert.match(source, /Gmail dry-run 확인/);
+  assert.match(source, /\/api\/imports\/gmail\/poll/);
+  assert.match(source, /메일과 첨부를 읽기만 하며 후잉 원장은 변경하지 않습니다/);
   assert.match(source, /dry-run only/);
   assert.match(source, /최근 import batch/);
+  assert.match(source, /정규화/);
+  assert.match(source, /검토 필요/);
   assert.match(source, /현재 추가로 승인할 카드혜택 후보는 없습니다/);
   assert.match(source, /감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다/);
   assert.match(source, /신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다/);

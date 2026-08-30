@@ -1,4 +1,4 @@
-import { query } from "../../lib/db/postgres.ts";
+import { query, withTransaction, type DatabaseQuery } from "../../lib/db/postgres.ts";
 import { getLedgerEntryAccounts } from "../whooing/account-repository.ts";
 import type {
   ImportBenefitStatus,
@@ -228,6 +228,27 @@ export async function getLatestImportBatchForSourceFile(sourceFileHash: string) 
   return row ? { batchId: Number(row.id), status: row.status } : null;
 }
 
+export async function getImportBatchForGmailAttachment(messageId: string, attachmentId: string) {
+  if (!(await getImportSchemaStatus()).importTablesAvailable) return null;
+  const result = await query<{ id: string; status: PersistedImportBatchStatus }>(
+    `
+    select id::text, status
+    from app.import_batches
+    where gmail_message_id = $1 and gmail_attachment_id = $2
+    limit 1
+    `,
+    [messageId, attachmentId],
+  );
+  const row = result.rows[0];
+  return row ? { batchId: Number(row.id), status: row.status } : null;
+}
+
+export async function hasProcessedGmailAttachmentIdentity(identity: string) {
+  const match = /^gmail:([^:]+):([^:]+)$/.exec(identity);
+  if (!match) return false;
+  return Boolean(await getImportBatchForGmailAttachment(match[1], match[2]));
+}
+
 export async function createImportBatch(input: {
   filename: string;
   sourceFileHash: string;
@@ -236,6 +257,8 @@ export async function createImportBatch(input: {
   rows: ReconciledImportRow[];
   possibleDeletes: ReconciledImportRow[];
   initialStatus?: "applying" | "review";
+  gmailMessageId?: string;
+  gmailAttachmentId?: string;
 }) {
   const schema = await getImportSchemaStatus();
   const initialStatus = input.initialStatus ?? "applying";
@@ -245,71 +268,134 @@ export async function createImportBatch(input: {
   if (!schemaAvailable) throw new Error("import_schema_unavailable");
   const reviewCount = input.rows.filter((row) => !["auto_creatable", "duplicate"].includes(row.status)).length
     + input.possibleDeletes.length;
-  const batch = await query<{ id: string }>(
-    `
-    insert into app.import_batches (
-      source, filename, source_file_hash, export_started_at, export_ended_at, status,
-      total_count, review_count, duplicate_count
-    ) values ('pyeonhan_excel', $1, $2, $3::date, $4::date, $5, $6, $7, $8)
-    returning id::text
-    `,
-    [
-      input.filename,
-      input.sourceFileHash,
-      input.startDate,
-      input.endDate,
-      initialStatus,
-      input.rows.length,
-      reviewCount,
-      input.rows.filter((row) => row.status === "duplicate").length,
-    ],
-  );
-  const batchId = Number(batch.rows[0].id);
-  const rowIds = new Map<string, number>();
-  for (const row of input.rows) {
-    const transaction = row.transaction;
-    const inserted = await query<{ id: string }>(
+  return withTransaction(async (transactionQuery) => {
+    await transactionQuery(
+      "select pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [input.sourceFileHash],
+    );
+    if (initialStatus === "review") {
+      const existing = await getExistingRowReferences(
+        transactionQuery,
+        input.sourceFileHash,
+        input.gmailMessageId,
+        input.gmailAttachmentId,
+      );
+      if (existing) return { ...existing, reused: true };
+    }
+
+    const batch = await transactionQuery<{ id: string }>(
       `
-      insert into app.import_rows (
-        batch_id, row_index, occurrence_index, source_identity_key, source_content_hash,
-        occurred_date, entry_type, source_asset_name, counterparty_asset_name,
-        source_category_name, source_subcategory_name, item, memo, posting_amount,
-        approval_amount, discount_amount, currency, status, review_reason,
-        matched_whooing_entry_id, benefit_status, benefit_rule_id,
-        benefit_confidence, benefit_reason, benefit_event_id
-      ) values (
-        $1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13,
-        $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
-      ) returning id::text
+      insert into app.import_batches (
+        source, gmail_message_id, gmail_attachment_id, filename, source_file_hash,
+        export_started_at, export_ended_at, status,
+        total_count, review_count, duplicate_count
+      ) values ('pyeonhan_excel', $1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10)
+      returning id::text
       `,
       [
-        batchId, transaction.sourceRowIndexes[0] ?? 1, transaction.occurrenceIndex,
-        transaction.sourceIdentityKey, transaction.sourceContentHash, transaction.occurredDate,
-        transaction.entryType, transaction.sourceAssetName, transaction.counterpartyAssetName,
-        transaction.sourceCategoryName, transaction.sourceSubcategoryName, transaction.item,
-        transaction.memo, transaction.postingAmount, transaction.approvalAmount,
-        transaction.discountAmount, transaction.currency, row.status, row.reason,
-        row.matchedWhooingEntryId,
-        row.cardBenefitStatus,
-        row.cardBenefitCandidate?.ruleId ?? null,
-        row.cardBenefitCandidate?.confidence ?? null,
-        row.cardBenefitCandidate?.reason ?? "",
-        row.cardBenefitStatus === "event_exists"
-          ? (await getExistingBenefitEventId(row.matchedWhooingEntryId))
-          : null,
+        input.gmailMessageId ?? null,
+        input.gmailAttachmentId ?? null,
+        input.filename,
+        input.sourceFileHash,
+        input.startDate,
+        input.endDate,
+        initialStatus,
+        input.rows.length,
+        reviewCount,
+        input.rows.filter((row) => row.status === "duplicate").length,
       ],
     );
-    rowIds.set(
-      importRowReferenceKey(transaction.sourceIdentityKey, transaction.occurrenceIndex),
-      Number(inserted.rows[0].id),
-    );
-  }
-  return { batchId, rowIds, reviewCount };
+    const batchId = Number(batch.rows[0].id);
+    const rowIds = new Map<string, number>();
+    for (const row of input.rows) {
+      const transaction = row.transaction;
+      const inserted = await transactionQuery<{ id: string }>(
+        `
+        insert into app.import_rows (
+          batch_id, row_index, occurrence_index, source_identity_key, source_content_hash,
+          occurred_date, entry_type, source_asset_name, counterparty_asset_name,
+          source_category_name, source_subcategory_name, item, memo, posting_amount,
+          approval_amount, discount_amount, currency, status, review_reason,
+          matched_whooing_entry_id, benefit_status, benefit_rule_id,
+          benefit_confidence, benefit_reason, benefit_event_id
+        ) values (
+          $1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13,
+          $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+        ) returning id::text
+        `,
+        [
+          batchId, transaction.sourceRowIndexes[0] ?? 1, transaction.occurrenceIndex,
+          transaction.sourceIdentityKey, transaction.sourceContentHash, transaction.occurredDate,
+          transaction.entryType, transaction.sourceAssetName, transaction.counterpartyAssetName,
+          transaction.sourceCategoryName, transaction.sourceSubcategoryName, transaction.item,
+          transaction.memo, transaction.postingAmount, transaction.approvalAmount,
+          transaction.discountAmount, transaction.currency, row.status, row.reason,
+          row.matchedWhooingEntryId,
+          row.cardBenefitStatus,
+          row.cardBenefitCandidate?.ruleId ?? null,
+          row.cardBenefitCandidate?.confidence ?? null,
+          row.cardBenefitCandidate?.reason ?? "",
+          row.cardBenefitStatus === "event_exists"
+            ? (await getExistingBenefitEventId(row.matchedWhooingEntryId, transactionQuery))
+            : null,
+        ],
+      );
+      rowIds.set(
+        importRowReferenceKey(transaction.sourceIdentityKey, transaction.occurrenceIndex),
+        Number(inserted.rows[0].id),
+      );
+    }
+    return { batchId, rowIds, reviewCount, reused: false };
+  });
 }
 
-async function getExistingBenefitEventId(whooingEntryId: number | null) {
+async function getExistingRowReferences(
+  transactionQuery: DatabaseQuery,
+  sourceFileHash: string,
+  gmailMessageId?: string,
+  gmailAttachmentId?: string,
+) {
+  const result = await transactionQuery<{
+    batch_id: string;
+    review_count: number;
+    id: string;
+    source_identity_key: string;
+    occurrence_index: number;
+  }>(
+    `
+    select b.id::text as batch_id, b.review_count, r.id::text,
+           r.source_identity_key, r.occurrence_index
+    from app.import_batches b
+    join app.import_rows r on r.batch_id = b.id
+    where b.source = 'pyeonhan_excel'
+      and b.status in ('review', 'pending', 'applying', 'completed', 'partial')
+      and (
+        b.source_file_hash = $1
+        or ($2::text is not null and b.gmail_message_id = $2 and b.gmail_attachment_id = $3)
+      )
+    order by b.created_at desc, r.id
+    `,
+    [sourceFileHash, gmailMessageId ?? null, gmailAttachmentId ?? null],
+  );
+  if (result.rows.length === 0) return null;
+  const batchId = result.rows[0].batch_id;
+  const rows = result.rows.filter((row) => row.batch_id === batchId);
+  return {
+    batchId: Number(batchId),
+    rowIds: new Map(rows.map((row) => [
+      importRowReferenceKey(row.source_identity_key, row.occurrence_index),
+      Number(row.id),
+    ])),
+    reviewCount: Number(rows[0].review_count),
+  };
+}
+
+async function getExistingBenefitEventId(
+  whooingEntryId: number | null,
+  databaseQuery: DatabaseQuery = query,
+) {
   if (!whooingEntryId) return null;
-  const result = await query<{ event_id: string }>(
+  const result = await databaseQuery<{ event_id: string }>(
     `
     select event_id::text
     from app.card_benefit_events
@@ -330,6 +416,8 @@ export async function createImportReviewBatch(input: {
   endDate: string;
   rows: ReconciledImportRow[];
   possibleDeletes: ReconciledImportRow[];
+  gmailMessageId?: string;
+  gmailAttachmentId?: string;
 }) {
   return createImportBatch({ ...input, initialStatus: "review" });
 }

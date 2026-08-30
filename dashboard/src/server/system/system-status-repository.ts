@@ -6,6 +6,7 @@ import {
   type ImportOperationsStatus,
 } from "./system-status";
 import { getGmailImportRuntimeStatus } from "../import/gmail-watcher";
+import { loadGmailOAuthCredentials } from "../import/gmail-credentials";
 
 const DEFAULT_ETL_SERVICE_URL = "http://etl-service:8080";
 const ETL_HEALTH_TIMEOUT_MS = 2_000;
@@ -85,7 +86,9 @@ export async function getImportOperationsStatus(): Promise<ImportOperationsStatu
       supported: false,
       latestBatchId: null,
       latestBatchStatus: null,
+      latestFilename: null,
       sourceFileHash: null,
+      normalizedCount: 0,
       reviewRequiredCount: 0,
       benefitApprovalCandidateCount: 0,
       benefitEventExistsCount: 0,
@@ -94,26 +97,30 @@ export async function getImportOperationsStatus(): Promise<ImportOperationsStatu
   const result = await query<{
     id: string;
     status: string;
+    filename: string;
     source_file_hash: string | null;
+    total_count: number;
     review_required_count: string;
     benefit_candidate_count: string;
     benefit_existing_count: string;
   }>(`
-    select b.id::text, b.status, b.source_file_hash,
+    select b.id::text, b.status, b.filename, b.source_file_hash, b.total_count,
            count(*) filter (where r.status = 'review_required')::text as review_required_count,
            count(*) filter (where r.benefit_status = 'rule_matched')::text as benefit_candidate_count,
            count(*) filter (where r.benefit_status = 'event_exists')::text as benefit_existing_count
     from app.import_batches b
     left join app.import_rows r on r.batch_id = b.id
     where b.id = (select max(id) from app.import_batches)
-    group by b.id, b.status, b.source_file_hash
+    group by b.id, b.status, b.filename, b.source_file_hash, b.total_count
   `);
   const row = result.rows[0];
   return {
     supported: true,
     latestBatchId: row ? Number(row.id) : null,
     latestBatchStatus: row?.status ?? null,
+    latestFilename: row?.filename ?? null,
     sourceFileHash: row?.source_file_hash ?? null,
+    normalizedCount: Number(row?.total_count ?? 0),
     reviewRequiredCount: Number(row?.review_required_count ?? 0),
     benefitApprovalCandidateCount: Number(row?.benefit_candidate_count ?? 0),
     benefitEventExistsCount: Number(row?.benefit_existing_count ?? 0),
@@ -125,12 +132,14 @@ export function getCurrentSystemStatus() {
     checkEtlHealth,
     getMirrorActivity,
     getImportOperationsStatus,
-    getGmailImportStatus: () => {
+    getGmailImportStatus: async () => {
       const status = getGmailImportRuntimeStatus();
+      const credentials = status.enabled ? await loadGmailOAuthCredentials() : null;
+      const ready = credentials?.state === "ready";
       return {
         enabled: status.enabled,
-        state: status.state,
-        credentialsConfigured: status.credentialsConfigured,
+        state: !status.enabled ? "disabled" as const : ready ? "ready" as const : "needs_credentials" as const,
+        credentialsConfigured: ready,
         dryRunOnly: status.dryRunOnly,
         label: status.label,
       };
