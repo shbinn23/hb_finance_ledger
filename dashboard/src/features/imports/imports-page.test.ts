@@ -14,7 +14,7 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /삭제 후보/);
   assert.match(source, /충돌/);
   assert.match(source, /신규 확정 거래 자동 등록/);
-  assert.match(source, /수정·삭제 후보는 표시만 하며 자동 반영하지 않습니다/);
+  assert.match(source, /수정은 단건 승인하며 삭제 후보는 표시만 합니다/);
   assert.match(source, /window\.confirm/);
   assert.match(source, /migration 미적용 상태/);
   assert.match(source, /새 자산·분류 후보/);
@@ -26,7 +26,7 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /후잉 원장은 수정하지 않고 app\.card_benefit_events만 생성합니다/);
   assert.match(source, /원장 수정 없음, 카드혜택 event만 생성/);
   assert.match(source, /수입 의미가 섞여 있어 수동 정책 필요/);
-  assert.match(source, /자동 삭제는 수행하지 않음/);
+  assert.match(source, /자동 삭제와 신규 계정 자동 생성은 지원하지 않습니다/);
   assert.match(source, /Gmail 자동 감지/);
   assert.match(source, /Gmail dry-run 확인/);
   assert.match(source, /신규 거래 후보/);
@@ -50,4 +50,13 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다/);
   assert.match(source, /환급\/캐시백은 수입, 지출 환급, 카드 할인 중 의미가 섞일 수 있어 자동 처리하지 않습니다/);
   assert.match(source, /민생지원쿠폰 차액조정은 balance adjustment 또는 별도 지원금 처리 정책 확정 전까지 review-only입니다/);
+  assert.match(source, /\/api\/imports\/actions\/register/);
+  assert.match(source, /\/api\/imports\/actions\/approve-update/);
+  assert.match(source, /\/api\/imports\/actions\/review/);
+  assert.match(source, /\/api\/imports\/actions\/history/);
+  assert.match(source, /Whooing 원장에 실제 등록/);
+  assert.match(source, /Whooing 거래를 실제 수정/);
+  assert.match(source, /작업 이력/);
+  assert.match(source, /자동 삭제와 신규 계정 자동 생성은 지원하지 않습니다/);
+  assert.match(source, /confirmed: true/);
 });

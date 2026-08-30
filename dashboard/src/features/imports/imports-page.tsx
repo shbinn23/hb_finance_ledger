@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type ImportStatus = "auto_creatable" | "duplicate" | "mapping_required" | "possible_update"
-  | "possible_delete" | "conflict" | "review_required";
+  | "possible_delete" | "conflict" | "review_required" | "created" | "updated"
+  | "skipped" | "reviewed" | "write_failed";
 type ImportViewFilter = "all" | "new" | "update" | "transfer" | "mapping"
   | "benefit" | "review" | "duplicate";
 type BenefitStatus = "not_applicable" | "rule_matched" | "rule_uncertain" | "event_exists"
@@ -66,6 +67,7 @@ interface DryRunResult {
     importTablesAvailable: boolean;
     benefitReviewSupported: boolean;
     autoApplySupported: boolean;
+    actionExecutionSupported: boolean;
   };
   rows: DryRunRow[];
   possibleDeletes: DryRunRow[];
@@ -117,6 +119,16 @@ interface ImportRuntimeStatus {
   };
 }
 
+interface ImportActionHistoryItem {
+  id: number;
+  rowId: number | null;
+  operationType: string;
+  status: string;
+  whooingEntryId: number | null;
+  errorMessage: string | null;
+  updatedAt: string;
+}
+
 const labels: Record<ImportStatus, { label: string; tone: "stable" | "watch" | "over" | "neutral" }> = {
   auto_creatable: { label: "자동등록 가능", tone: "stable" },
   duplicate: { label: "중복", tone: "neutral" },
@@ -125,6 +137,11 @@ const labels: Record<ImportStatus, { label: string; tone: "stable" | "watch" | "
   possible_delete: { label: "삭제 후보", tone: "watch" },
   conflict: { label: "충돌", tone: "over" },
   review_required: { label: "검토 필요", tone: "watch" },
+  created: { label: "등록 완료", tone: "stable" },
+  updated: { label: "수정 완료", tone: "stable" },
+  skipped: { label: "건너뜀", tone: "neutral" },
+  reviewed: { label: "검토 완료", tone: "neutral" },
+  write_failed: { label: "처리 실패", tone: "over" },
 };
 
 const benefitLabels: Record<BenefitStatus, { label: string; tone: "stable" | "watch" | "over" | "neutral" }> = {
@@ -169,6 +186,9 @@ export function ImportsPage() {
   const [message, setMessage] = useState("");
   const [viewFilter, setViewFilter] = useState<ImportViewFilter>("all");
   const [runtimeStatus, setRuntimeStatus] = useState<ImportRuntimeStatus | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<number[]>([]);
+  const [busyActionRowId, setBusyActionRowId] = useState<number | null>(null);
+  const [actionHistory, setActionHistory] = useState<ImportActionHistoryItem[]>([]);
 
   function refreshRuntimeStatus() {
     return fetch("/api/system/status", { cache: "no-store" })
@@ -177,8 +197,16 @@ export function ImportsPage() {
       .catch(() => setRuntimeStatus(null));
   }
 
+  function refreshActionHistory() {
+    return fetch("/api/imports/actions/history", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { operations?: ImportActionHistoryItem[] }) => setActionHistory(payload.operations ?? []))
+      .catch(() => setActionHistory([]));
+  }
+
   useEffect(() => {
     void refreshRuntimeStatus();
+    void refreshActionHistory();
   }, []);
 
   async function pollGmail() {
@@ -189,8 +217,12 @@ export function ImportsPage() {
       const payload = await response.json() as { message?: string; latestBatch?: DryRunResult | null };
       setMessage(payload.message ?? "Gmail dry-run 확인을 마쳤습니다.");
       if (response.ok) {
-        if (payload.latestBatch) setResult(payload.latestBatch);
+        if (payload.latestBatch) {
+          setResult(payload.latestBatch);
+          setSelectedRowIds([]);
+        }
         await refreshRuntimeStatus();
+        await refreshActionHistory();
       }
     } catch {
       setMessage("Gmail read-only 확인 중 오류가 발생했습니다.");
@@ -216,7 +248,10 @@ export function ImportsPage() {
         setMessage(payload.message ?? "요청에 실패했습니다.");
         return;
       }
-      if (mode !== "apply") setResult(payload as DryRunResult);
+      if (mode !== "apply") {
+        setResult(payload as DryRunResult);
+        setSelectedRowIds([]);
+      }
       setMessage(payload.message ?? (mode === "dry-run" ? "dry-run 비교를 완료했습니다." : "요청을 완료했습니다."));
     } catch {
       setMessage("서버 요청 중 오류가 발생했습니다.");
@@ -225,11 +260,101 @@ export function ImportsPage() {
     }
   }
 
+  function updateRowStatus(rowId: number, status: ImportStatus) {
+    setResult((current) => current ? {
+      ...current,
+      rows: current.rows.map((row) => row.importRowId === rowId ? { ...row, status } : row),
+      possibleDeletes: current.possibleDeletes.map((row) => row.importRowId === rowId ? { ...row, status } : row),
+    } : current);
+  }
+
   async function apply() {
-    if (!result || !window.confirm(
-      "자동 등록은 신규 확정 거래만 수행하며, 수정/삭제는 자동 반영하지 않습니다. 실제 Whooing 원장에 등록할까요?",
+    if (!result || selectedRowIds.length === 0) {
+      setMessage("Whooing 원장에 실제 등록할 신규 거래를 선택해 주세요.");
+      return;
+    }
+    if (!window.confirm(
+      `선택한 신규 확정 거래 ${selectedRowIds.length}건을 Whooing 원장에 실제 등록합니다. 수정·삭제는 포함되지 않습니다. 진행할까요?`,
     )) return;
-    await fileRequest("/api/imports/pyeonhan/apply", "apply");
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/imports/actions/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ importRowIds: selectedRowIds, confirmed: true }),
+      });
+      const payload = await response.json() as {
+        message?: string;
+        created?: number;
+        reused?: number;
+        failed?: number;
+        syncPending?: number;
+        results?: Array<{ rowId: number; status: "created" | "reused" | "skipped" | "failed" }>;
+      };
+      payload.results?.forEach((item) => {
+        if (item.status === "created" || item.status === "reused") updateRowStatus(item.rowId, "created");
+        if (item.status === "failed") updateRowStatus(item.rowId, "write_failed");
+      });
+      setSelectedRowIds([]);
+      setMessage(payload.message ?? (response.ok
+        ? `등록 ${payload.created ?? 0}건 · 재사용 ${payload.reused ?? 0}건 · 실패 ${payload.failed ?? 0}건${payload.syncPending ? ` · 동기화 대기 ${payload.syncPending}건` : ""}`
+        : "신규 거래 등록에 실패했습니다."));
+      await refreshActionHistory();
+      await refreshRuntimeStatus();
+    } catch {
+      setMessage("신규 거래 등록 요청 중 오류가 발생했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveUpdate(row: DryRunRow) {
+    if (!row.importRowId || !window.confirm(
+      `mirror #${row.matchedWhooingEntryId ?? "-"} Whooing 거래를 실제 수정합니다. 표시된 수정 전 → 현재 값을 확인했나요?`,
+    )) return;
+    setBusyActionRowId(row.importRowId);
+    setMessage("");
+    try {
+      const response = await fetch("/api/imports/actions/approve-update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ importRowId: row.importRowId, confirmed: true }),
+      });
+      const payload = await response.json() as { status?: string; message?: string };
+      if (response.ok && (payload.status === "updated" || payload.status === "reused")) {
+        updateRowStatus(row.importRowId, "updated");
+      }
+      setMessage(payload.message ?? (response.ok ? "Whooing 거래 수정을 완료했습니다." : "Whooing 거래 수정에 실패했습니다."));
+      await refreshActionHistory();
+    } catch {
+      setMessage("Whooing 거래 수정 요청 중 오류가 발생했습니다.");
+    } finally {
+      setBusyActionRowId(null);
+    }
+  }
+
+  async function markReviewed(row: DryRunRow, action: "skip" | "review") {
+    if (!row.importRowId || !window.confirm(
+      action === "skip" ? "이 후보를 건너뜀으로 표시할까요? 원장 거래는 삭제하지 않습니다." : "이 후보를 검토 완료로 표시할까요? 원장은 변경하지 않습니다.",
+    )) return;
+    setBusyActionRowId(row.importRowId);
+    setMessage("");
+    try {
+      const response = await fetch("/api/imports/actions/review", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ importRowIds: [row.importRowId], action, confirmed: true }),
+      });
+      const payload = await response.json() as { message?: string; updated?: number };
+      if (response.ok && payload.updated) updateRowStatus(row.importRowId, action === "skip" ? "skipped" : "reviewed");
+      setMessage(payload.message ?? (response.ok ? "검토 상태를 저장했습니다." : "검토 상태 저장에 실패했습니다."));
+      await refreshActionHistory();
+    } catch {
+      setMessage("검토 상태 저장 중 오류가 발생했습니다.");
+    } finally {
+      setBusyActionRowId(null);
+    }
   }
 
   async function approveBenefit(row: DryRunRow) {
@@ -242,7 +367,7 @@ export function ImportsPage() {
       const response = await fetch("/api/imports/benefit-events", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ importRowId: row.importRowId, ruleId: row.cardBenefitCandidate.ruleId }),
+        body: JSON.stringify({ importRowId: row.importRowId, ruleId: row.cardBenefitCandidate.ruleId, confirmed: true }),
       });
       const payload = await response.json() as { benefitStatus?: BenefitStatus; message?: string };
       setMessage(payload.message ?? "카드혜택 승인 요청을 처리했습니다.");
@@ -254,6 +379,7 @@ export function ImportsPage() {
             : candidate),
         } : current);
       }
+      await refreshActionHistory();
     } catch {
       setMessage("카드혜택 승인 요청 중 오류가 발생했습니다.");
     } finally {
@@ -329,6 +455,8 @@ export function ImportsPage() {
   const newCandidateCount = result?.rows.filter((row) => ![
     "duplicate", "possible_update", "conflict",
   ].includes(row.status)).length ?? 0;
+  const dryRunOnly = runtimeStatus?.gmailImport.dryRunOnly ?? true;
+  const actionExecutionSupported = result?.schema.actionExecutionSupported ?? false;
 
   return (
     <>
@@ -369,7 +497,7 @@ export function ImportsPage() {
             </div>
             <Button
               variant="secondary"
-              disabled={gmailBusy || gmailState !== "ready" || runtimeStatus?.gmailImport.dryRunOnly === false}
+              disabled={gmailBusy || gmailState !== "ready"}
               onClick={pollGmail}
             >
               <MailSearch size={15} />{gmailBusy ? "확인 중" : "Gmail dry-run 확인"}
@@ -409,12 +537,12 @@ export function ImportsPage() {
             <span>금액 불일치 <strong>{result.summary.benefitAmountMismatches}</strong></span>
           </div>
 
-          {!result.schema.autoApplySupported || !result.schema.benefitReviewSupported ? (
+          {!result.schema.actionExecutionSupported || !result.schema.benefitReviewSupported ? (
             <div className="import-warning"><AlertTriangle size={17} /><p>import/ledger operation 또는 benefit review migration 미적용 상태입니다. 지원되지 않는 write 작업은 비활성화됩니다.</p></div>
           ) : null}
           <div className="import-warning import-policy-note">
             <AlertTriangle size={17} />
-            <p>자동 삭제는 수행하지 않음. 수정·삭제는 review 후 반영합니다. 환급/캐시백은 수입, 지출 환급, 카드 할인 중 의미가 섞일 수 있어 자동 처리하지 않습니다. 수입 의미가 섞여 있어 수동 정책 필요 상태입니다. 민생지원쿠폰 차액조정은 balance adjustment 또는 별도 지원금 처리 정책 확정 전까지 review-only입니다.</p>
+            <p>자동 삭제와 신규 계정 자동 생성은 지원하지 않습니다. 수정 후보는 단건 승인 후 반영하고 삭제 후보는 review-only입니다. 환급/캐시백은 수입, 지출 환급, 카드 할인 중 의미가 섞일 수 있어 자동 처리하지 않습니다. 수입 의미가 섞여 있어 수동 정책 필요 상태입니다. 민생지원쿠폰 차액조정은 balance adjustment 또는 별도 지원금 처리 정책 확정 전까지 review-only입니다.</p>
           </div>
 
           {result.summary.benefitCandidates === 0
@@ -484,7 +612,7 @@ export function ImportsPage() {
                             <td>{row.cardBenefitCandidate?.label ?? "확정 불가"}</td>
                             <td>{row.cardBenefitCandidate ? `${Math.round(row.cardBenefitCandidate.confidence * 100)}%` : "-"}</td>
                             <td><Badge tone={benefit.tone}>{benefit.label}</Badge></td>
-                            <td><Button size="sm" disabled={!canApprove || busyBenefitRowId === row.importRowId} onClick={() => approveBenefit(row)}>
+                            <td><Button size="sm" disabled={!canApprove || busyBenefitRowId === row.importRowId || dryRunOnly || !actionExecutionSupported} onClick={() => approveBenefit(row)}>
                               {row.cardBenefitStatus === "created" || row.cardBenefitStatus === "event_exists"
                                 ? "생성 완료" : !result.batchId ? "검토 저장 필요" : "event 승인"}
                             </Button></td>
@@ -513,7 +641,7 @@ export function ImportsPage() {
                           key={`${suggestion.accountType}:${suggestion.accountId}`}
                           size="sm"
                           variant="secondary"
-                          disabled={busyMappingKey === `${gap.mappingType}:${gap.sourceKey}`}
+                          disabled={busyMappingKey === `${gap.mappingType}:${gap.sourceKey}` || !actionExecutionSupported}
                           onClick={() => saveMapping(gap, suggestion)}
                         >
                           {suggestion.sourceKey}에 매핑
@@ -542,23 +670,31 @@ export function ImportsPage() {
                     <option value="review">검토 필요</option>
                     <option value="duplicate">중복</option>
                   </select></label>
-                  <Button size="sm" disabled={busy || !result.schema.autoApplySupported || result.summary.autoCreatable === 0 || (runtimeStatus?.gmailImport.dryRunOnly ?? true)} onClick={apply}>
-                    신규 확정 거래 자동 등록
+                  <Button size="sm" disabled={busy || !actionExecutionSupported || selectedRowIds.length === 0 || dryRunOnly} onClick={apply}>
+                    선택 거래 등록
                   </Button>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              <p className="metric-detail">수정·삭제 후보는 표시만 하며 자동 반영하지 않습니다. dry-run-only에서는 원장 등록이 비활성화됩니다.</p>
+              <p className="metric-detail">신규 확정 거래 자동 등록은 선택한 저장 row만 수행합니다. 수정은 단건 승인하며 삭제 후보는 표시만 합니다. dry-run-only에서는 원장 등록이 비활성화됩니다.</p>
               <div className="table-scroll"><table className="data-table import-table">
                 <thead><tr>
-                  <th>원본 행</th><th>날짜</th><th>유형</th><th>자산</th><th>내용</th>
+                  <th>선택</th><th>원본 행</th><th>날짜</th><th>유형</th><th>자산</th><th>내용</th>
                   <th className="amount">승인금액</th><th className="amount">매입금액</th>
                   <th className="amount">할인액</th><th>카드혜택 후보</th><th>상태</th><th>비교 근거</th><th>액션</th>
                 </tr></thead>
                 <tbody>{filteredRows.map((row, index) => {
                   const status = labels[row.status];
                   return <tr key={`${row.transaction.sourceRowIndexes.join("-")}-${row.status}-${index}`}>
+                    <td>{row.status === "auto_creatable" && row.importRowId ? <input
+                      type="checkbox"
+                      aria-label={`${row.transaction.item} 신규 등록 선택`}
+                      checked={selectedRowIds.includes(row.importRowId)}
+                      onChange={(event) => setSelectedRowIds((current) => event.target.checked
+                        ? [...new Set([...current, row.importRowId as number])]
+                        : current.filter((id) => id !== row.importRowId))}
+                    /> : "-"}</td>
                     <td>{row.transaction.sourceRowIndexes.join(", ") || "이전 snapshot"}</td>
                     <td>{row.transaction.occurredDate || "-"}</td><td>{row.transaction.entryType === "transfer" ? "이체" : row.transaction.entryType}</td><td>{row.transaction.sourceAssetName || "-"}</td>
                     <td><strong>{row.transaction.item || "-"}</strong><small>{row.transaction.memo}</small></td>
@@ -585,10 +721,18 @@ export function ImportsPage() {
                     </td>
                     <td>
                       {row.status === "possible_update"
-                        ? <Button size="sm" disabled>수정 승인 준비 중</Button>
+                        ? <div className="import-actions">
+                          <Button size="sm" disabled={!row.importRowId || busyActionRowId === row.importRowId || dryRunOnly || !actionExecutionSupported} onClick={() => approveUpdate(row)}>수정 승인</Button>
+                          <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "review")}>검토 완료</Button>
+                        </div>
                         : row.status === "auto_creatable"
-                          ? <Button size="sm" disabled={runtimeStatus?.gmailImport.dryRunOnly ?? true}>신규 등록</Button>
-                          : <span className="metric-detail">{row.status === "duplicate" ? "처리 없음" : "검토 필요"}</span>}
+                          ? <span className="metric-detail">{row.importRowId ? "선택 후 등록" : "검토 batch 저장 필요"}</span>
+                          : ["possible_delete", "conflict", "review_required", "mapping_required"].includes(row.status)
+                            ? <div className="import-actions">
+                              <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "review")}>검토 완료</Button>
+                              <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "skip")}>건너뜀</Button>
+                            </div>
+                            : <span className="metric-detail">{row.status === "duplicate" ? "처리 없음" : labels[row.status].label}</span>}
                     </td>
                   </tr>;
                 })}</tbody>
@@ -597,6 +741,26 @@ export function ImportsPage() {
           </Card>
         </>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardDescription>최근 승인·검토 결과</CardDescription>
+          <CardTitle>작업 이력</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {actionHistory.length > 0 ? <div className="table-scroll"><table className="data-table">
+            <thead><tr><th>시각</th><th>작업</th><th>import row</th><th>Whooing entry</th><th>상태</th><th>메시지</th></tr></thead>
+            <tbody>{actionHistory.map((operation) => <tr key={operation.id}>
+              <td>{new Date(operation.updatedAt).toLocaleString("ko-KR")}</td>
+              <td>{operation.operationType}</td>
+              <td>{operation.rowId ?? "mapping"}</td>
+              <td>{operation.whooingEntryId ?? "-"}</td>
+              <td><Badge tone={operation.status === "created" ? "stable" : operation.status === "failed" ? "over" : "watch"}>{operation.status}</Badge></td>
+              <td>{operation.errorMessage ?? "-"}</td>
+            </tr>)}</tbody>
+          </table></div> : <p className="metric-detail">아직 기록된 승인 작업이 없습니다.</p>}
+        </CardContent>
+      </Card>
     </>
   );
 }
