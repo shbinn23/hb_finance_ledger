@@ -235,6 +235,27 @@ This section supersedes the dry-run-only runtime state recorded in the supervise
 - `gmail-import-worker` remains active at the configured interval. It logs only poll counts and calls the
   same guarded dashboard route; it has no Gmail or Whooing credentials of its own.
 
+### Safe `possible_update` execution
+
+- A revision is eligible for `possible_update` only when persisted source evidence identifies one matched
+  Whooing entry and the replacement has strong same-date, same-asset, and same-item evidence. Repeated item names on
+  another date stay `conflict`; they are not treated as updates or automatic creates.
+- A mirror-only similar row without previous snapshot linkage stays `conflict`, even when its date, amount,
+  and account happen to match.
+- Appended ledger metadata such as `승인금액`, `입금금액`, `이체금액`, and `src=` is ignored when comparing
+  the source memo. Metadata-only differences therefore remain `duplicate`.
+- A confirmed update rebuilds the full entry payload from server-side evidence and writes the Excel KRW
+  value as Whooing `money` (posting amount). Discounted rows keep approval, performance, posting, and
+  applied discount as separate `app.card_benefit_events` amounts.
+- Immediately before PUT, the service reads the current Whooing entry and compares every persisted mirror
+  field. Any remote change or lookup failure stops the update without writing.
+- Successful `updated` rows remain authoritative on later polls. The deterministic update key includes
+  source identity, content hash, and the target Whooing entry; the benefit key includes source identity
+  and occurrence. Legacy update keys remain readable only for completed operations tied to the same
+  entry, and repeated approval returns the existing result without another PUT or event insert.
+- `conflict`, `possible_delete`, `mapping_required`, refund/cashback, support-coupon, and uncertain-rule
+  rows remain review-only and must not enter automatic update execution.
+
 ## Review-only policies
 
 - Refund/cashback rows can mean income, expense reversal, or card benefit. They are never automatic.
@@ -249,8 +270,9 @@ expense, add one asset, enter the reciprocal in/out rows for one transfer, and a
 export as a new Gmail attachment, then run `Gmail dry-run 확인` once.
 
 - **Existing expense modification:** an unchanged source identity with a changed content hash is
-  `possible_update`. When date, asset, or amount changes the identity, reconciliation links it only when
-  the missing previous row and new row form an unambiguous one-to-one revision. `/imports` shows the
+  `possible_update`. When amount changes the identity, reconciliation links it only when the missing
+  previous row and new row have strong same-date, same-asset, and same-item evidence. Date changes without stronger
+  source evidence remain `conflict`. `/imports` shows the
   previous snapshot and current values plus mirror evidence. A confirmed single-row action rebuilds the
   full Whooing payload from persisted server evidence and uses `PUT entries/:entry_id.json`; it is never
   updated automatically from browser-supplied financial fields.
