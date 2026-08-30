@@ -10,12 +10,15 @@ interface WhooingApiResponse {
 }
 
 export class WhooingWriteClientError extends Error {
+  public readonly status?: number;
+
   constructor(
     message: string,
-    public readonly status?: number,
+    status?: number,
   ) {
     super(message);
     this.name = "WhooingWriteClientError";
+    this.status = status;
   }
 }
 
@@ -52,9 +55,9 @@ function formBody(payload: WhooingEntryPayload) {
   return params;
 }
 
-function safeApiError(payload: WhooingApiResponse) {
+function safeApiError(payload: WhooingApiResponse, action: "creation" | "update") {
   const message = payload.message ? `: ${payload.message}` : "";
-  return `Whooing API rejected entry creation${message}`;
+  return `Whooing API rejected entry ${action}${message}`;
 }
 
 export async function createWhooingEntry(payload: WhooingEntryPayload): Promise<WhooingApiResponse> {
@@ -73,8 +76,33 @@ export async function createWhooingEntry(payload: WhooingEntryPayload): Promise<
 
   const data = await response.json() as WhooingApiResponse;
   if (data.code !== undefined && data.code !== 200) {
-    throw new WhooingWriteClientError(safeApiError(data));
+    throw new WhooingWriteClientError(safeApiError(data, "creation"));
   }
 
+  return data;
+}
+
+export async function updateWhooingEntry(
+  entryId: number,
+  payload: WhooingEntryPayload,
+): Promise<WhooingApiResponse> {
+  if (!Number.isSafeInteger(entryId) || entryId <= 0) {
+    throw new WhooingWriteClientError("Invalid Whooing entry id");
+  }
+  const response = await fetch(`${WHOOING_API_BASE_URL}/entries/${entryId}.json`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-API-KEY": whooingApiKey(),
+    },
+    body: formBody(payload),
+  });
+  if (!response.ok) {
+    throw new WhooingWriteClientError("Whooing entry update request failed", response.status);
+  }
+  const data = await response.json() as WhooingApiResponse;
+  if (data.code !== undefined && data.code !== 200) {
+    throw new WhooingWriteClientError(safeApiError(data, "update"));
+  }
   return data;
 }

@@ -34,9 +34,6 @@ export async function POST(request: NextRequest) {
     if (result.status === "needs_credentials") {
       return NextResponse.json({ ok: false, ...result, message: "개인 Gmail OAuth credential과 refresh token이 필요합니다." }, { status: 503 });
     }
-    if (result.status === "write_mode_blocked") {
-      return NextResponse.json({ ok: false, ...result, message: "Gmail import는 dry-run-only 모드에서만 실행할 수 있습니다." }, { status: 409 });
-    }
     return NextResponse.json({
       ok: true,
       ...result,

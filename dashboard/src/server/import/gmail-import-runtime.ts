@@ -15,7 +15,7 @@ interface GmailImportedBatchSummary {
   autoCreatableCount?: number;
 }
 
-function emptyPollResult(status: "disabled" | "write_mode_blocked" | "needs_credentials", errors: string[] = []) {
+function emptyPollResult(status: "disabled" | "needs_credentials", errors: string[] = []) {
   return {
     status,
     checkedMessages: 0,
@@ -49,9 +49,6 @@ export async function runGmailImportDryRunPoll<T extends GmailImportedBatchSumma
   const runtime = getGmailImportRuntimeStatus(input.env, false);
   if (!runtime.enabled) {
     return emptyPollResult("disabled");
-  }
-  if (!runtime.dryRunOnly) {
-    return emptyPollResult("write_mode_blocked", ["gmail_dry_run_required"]);
   }
   const credentialResult = await input.loadCredentials();
   if (credentialResult.state !== "ready") {

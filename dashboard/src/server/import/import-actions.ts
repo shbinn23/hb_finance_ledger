@@ -23,6 +23,60 @@ export function importActionOriginIsAllowed(input: {
 
 type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
+function parseConfirmedRowIds(value: unknown): ParseResult<{ importRowIds: number[] }> {
+  if (!value || typeof value !== "object") return { ok: false, error: "invalid_request" };
+  const input = value as Record<string, unknown>;
+  if (input.confirmed !== true) return { ok: false, error: "confirmation_required" };
+  if (!Array.isArray(input.importRowIds) || input.importRowIds.length === 0) {
+    return { ok: false, error: "invalid_import_rows" };
+  }
+  const importRowIds = [...new Set(input.importRowIds.map(Number))];
+  if (importRowIds.length > 100 || importRowIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    return { ok: false, error: "invalid_import_rows" };
+  }
+  return { ok: true, value: { importRowIds } };
+}
+
+export function parseImportCreateRequest(value: unknown) {
+  return parseConfirmedRowIds(value);
+}
+
+export function parseImportUpdateRequest(value: unknown): ParseResult<{ importRowId: number }> {
+  if (!value || typeof value !== "object") return { ok: false, error: "invalid_request" };
+  const input = value as Record<string, unknown>;
+  if (input.confirmed !== true) return { ok: false, error: "confirmation_required" };
+  const importRowId = Number(input.importRowId);
+  return Number.isSafeInteger(importRowId) && importRowId > 0
+    ? { ok: true, value: { importRowId } }
+    : { ok: false, error: "invalid_import_row" };
+}
+
+export function parseImportBenefitRequest(value: unknown): ParseResult<{
+  importRowId: number;
+  ruleId: string;
+}> {
+  if (!value || typeof value !== "object") return { ok: false, error: "invalid_request" };
+  const input = value as Record<string, unknown>;
+  if (input.confirmed !== true) return { ok: false, error: "confirmation_required" };
+  const importRowId = Number(input.importRowId);
+  const ruleId = typeof input.ruleId === "string" ? input.ruleId.trim() : "";
+  if (!Number.isSafeInteger(importRowId) || importRowId <= 0 || !ruleId) {
+    return { ok: false, error: "invalid_benefit_approval" };
+  }
+  return { ok: true, value: { importRowId, ruleId } };
+}
+
+export function parseImportReviewRequest(value: unknown): ParseResult<{
+  importRowIds: number[];
+  action: "skip" | "review";
+}> {
+  const rows = parseConfirmedRowIds(value);
+  if (!rows.ok) return rows;
+  const action = (value as Record<string, unknown>).action;
+  if (action !== "skip" && action !== "review") return { ok: false, error: "invalid_review_action" };
+  return { ok: true, value: { ...rows.value, action } };
+}
+
 export function parseImportMappingRequest(value: unknown): ParseResult<{
   mappingType: ImportMapping["mappingType"];
   sourceKey: string;

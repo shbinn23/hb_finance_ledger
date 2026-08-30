@@ -81,6 +81,29 @@ test("Gmail import poll creates review batches and summarizes duplicates", async
   });
 });
 
+test("Gmail read-only poll remains available when approval writes are enabled", async () => {
+  let adapterCalls = 0;
+  const result = await runGmailImportDryRunPoll({
+    env: { GMAIL_IMPORT_ENABLED: "true", GMAIL_IMPORT_DRY_RUN_ONLY: "false" },
+    loadCredentials: async () => ({
+      state: "ready",
+      source: "env",
+      credentials: { clientId: "client-id", clientSecret: "client-secret", refreshToken: "refresh-token" },
+    }),
+    createAdapter: () => ({
+      listAttachments: async () => {
+        adapterCalls += 1;
+        return { checkedMessages: 0, attachments: [] };
+      },
+    }),
+    wasProcessed: async () => false,
+    wasSourceFileProcessed: async () => false,
+    importAttachment: async () => ({ batchId: 1 }),
+  });
+  assert.equal(result.status, "polled");
+  assert.equal(adapterCalls, 1);
+});
+
 test("Gmail import poll counts the same attachment as reused", async () => {
   const result = await runGmailImportDryRunPoll({
     env: { GMAIL_IMPORT_ENABLED: "true" },

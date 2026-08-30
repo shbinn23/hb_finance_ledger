@@ -3,8 +3,12 @@ import test from "node:test";
 import {
   importActionOriginIsAllowed,
   importWritesAreDryRunOnly,
+  parseImportCreateRequest,
+  parseImportBenefitRequest,
   parseImportMappingRequest,
   parseImportRowActionRequest,
+  parseImportReviewRequest,
+  parseImportUpdateRequest,
 } from "./import-actions.ts";
 
 test("import writes remain dry-run-only unless explicitly disabled", () => {
@@ -61,4 +65,36 @@ test("review actions require a positive persisted import row id", () => {
   assert.deepEqual(parseImportRowActionRequest({ importRowId: 17 }), { ok: true, value: { importRowId: 17 } });
   assert.equal(parseImportRowActionRequest({ importRowId: 0 }).ok, false);
   assert.equal(parseImportRowActionRequest({}).ok, false);
+});
+
+test("create approval requires confirmation and unique positive row ids", () => {
+  assert.deepEqual(parseImportCreateRequest({ confirmed: true, importRowIds: [7, 9, 7] }), {
+    ok: true,
+    value: { importRowIds: [7, 9] },
+  });
+  assert.equal(parseImportCreateRequest({ confirmed: false, importRowIds: [7] }).ok, false);
+  assert.equal(parseImportCreateRequest({ confirmed: true, importRowIds: [0] }).ok, false);
+  assert.equal(parseImportCreateRequest({ confirmed: true, importRowIds: [] }).ok, false);
+});
+
+test("update and review approvals validate their explicit action", () => {
+  assert.deepEqual(parseImportUpdateRequest({ confirmed: true, importRowId: 4 }), {
+    ok: true,
+    value: { importRowId: 4 },
+  });
+  assert.equal(parseImportUpdateRequest({ importRowId: 4 }).ok, false);
+  assert.deepEqual(parseImportReviewRequest({ confirmed: true, importRowIds: [4], action: "skip" }), {
+    ok: true,
+    value: { importRowIds: [4], action: "skip" },
+  });
+  assert.equal(parseImportReviewRequest({ confirmed: true, importRowIds: [4], action: "delete" }).ok, false);
+});
+
+test("benefit approval requires confirmation, row id, and rule id", () => {
+  assert.deepEqual(parseImportBenefitRequest({ confirmed: true, importRowId: 8, ruleId: "rule-1" }), {
+    ok: true,
+    value: { importRowId: 8, ruleId: "rule-1" },
+  });
+  assert.equal(parseImportBenefitRequest({ importRowId: 8, ruleId: "rule-1" }).ok, false);
+  assert.equal(parseImportBenefitRequest({ confirmed: true, importRowId: 8, ruleId: "" }).ok, false);
 });

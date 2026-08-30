@@ -8,6 +8,7 @@ import type {
   ReconciledImportRow,
 } from "./pyeonhan-reconciliation.ts";
 import type { BenefitApprovalCandidate } from "./pyeonhan-benefit-approval.ts";
+import type { ImportActionOperation, ImportActionRow } from "./import-action-service.ts";
 import type {
   ImportBatchStatus,
   PersistedImportBatchStatus,
@@ -20,6 +21,7 @@ export interface ImportSchemaStatus {
   ledgerOperationsAvailable: boolean;
   benefitReviewSupported: boolean;
   autoApplySupported: boolean;
+  actionExecutionSupported: boolean;
 }
 
 function compactDate(value: string) {
@@ -35,6 +37,7 @@ export async function getImportSchemaStatus(): Promise<ImportSchemaStatus> {
     import_tables: boolean;
     ledger_operations: boolean;
     benefit_review: boolean;
+    action_operations: boolean;
   }>(
     `
     select
@@ -48,17 +51,26 @@ export async function getImportSchemaStatus(): Promise<ImportSchemaStatus> {
         where table_schema = 'app'
           and table_name = 'import_rows'
           and column_name = 'benefit_status'
-      ) as benefit_review
+      ) as benefit_review,
+      (
+        select count(*) = 2
+        from information_schema.columns
+        where table_schema = 'app'
+          and table_name = 'import_write_operations'
+          and column_name in ('mapping_type', 'source_key')
+      ) as action_operations
     `,
   );
   const importTablesAvailable = result.rows[0]?.import_tables ?? false;
   const ledgerOperationsAvailable = result.rows[0]?.ledger_operations ?? false;
   const benefitReviewSupported = result.rows[0]?.benefit_review ?? false;
+  const actionExecutionSupported = result.rows[0]?.action_operations ?? false;
   return {
     importTablesAvailable,
     ledgerOperationsAvailable,
     benefitReviewSupported,
     autoApplySupported: importTablesAvailable && ledgerOperationsAvailable,
+    actionExecutionSupported: importTablesAvailable && ledgerOperationsAvailable && actionExecutionSupported,
   };
 }
 
@@ -725,4 +737,266 @@ export async function finishImportBatch(input: {
     `,
     [input.batchId, input.status, input.autoCreatedCount, input.writeFailedCount],
   );
+}
+
+export async function getImportActionRows(rowIds: number[]): Promise<ImportActionRow[]> {
+  if (rowIds.length === 0) return [];
+  const result = await query<{
+    id: string;
+    status: string;
+    source_identity_key: string;
+    source_content_hash: string;
+    occurred_date: string;
+    entry_type: string;
+    item: string;
+    memo: string;
+    posting_amount: string;
+    source_account_type: string | null;
+    source_account_id: string | null;
+    category_account_id: string | null;
+    counterparty_account_type: string | null;
+    counterparty_account_id: string | null;
+    matched_whooing_entry_id: string | null;
+    mirror_section_id: string | null;
+    mirror_entry_id: string | null;
+    mirror_occurred_date: string | null;
+  }>(
+    `
+    select r.id::text, r.status, r.source_identity_key, r.source_content_hash,
+           r.occurred_date::text, r.entry_type, r.item, r.memo, r.posting_amount::text,
+           source_mapping.whooing_account_type as source_account_type,
+           source_mapping.whooing_account_id as source_account_id,
+           category_mapping.whooing_account_id as category_account_id,
+           counterparty_mapping.whooing_account_type as counterparty_account_type,
+           counterparty_mapping.whooing_account_id as counterparty_account_id,
+           r.matched_whooing_entry_id::text,
+           mirror.section_id as mirror_section_id,
+           mirror.entry_id::text as mirror_entry_id,
+           case when mirror.entry_date is null then null else
+             to_char(to_date(floor(mirror.entry_date)::text, 'YYYYMMDD'), 'YYYY-MM-DD')
+           end as mirror_occurred_date
+    from app.import_rows r
+    left join app.import_mappings source_mapping
+      on source_mapping.source = 'pyeonhan_excel'
+     and source_mapping.mapping_type = 'asset'
+     and source_mapping.source_key = r.source_asset_name
+     and source_mapping.is_active
+    left join app.import_mappings category_mapping
+      on category_mapping.source = 'pyeonhan_excel'
+     and category_mapping.mapping_type = case when r.entry_type = 'income' then 'income_category' else 'expense_category' end
+     and category_mapping.source_key = concat_ws(' / ', r.source_category_name, r.source_subcategory_name)
+     and category_mapping.is_active
+    left join app.import_mappings counterparty_mapping
+      on counterparty_mapping.source = 'pyeonhan_excel'
+     and counterparty_mapping.mapping_type = 'asset'
+     and counterparty_mapping.source_key = r.counterparty_asset_name
+     and counterparty_mapping.is_active
+    left join whooing.entries mirror
+      on mirror.section_id = $2
+     and mirror.entry_id = r.matched_whooing_entry_id
+    where r.id = any($1::bigint[])
+    order by r.id
+    `,
+    [rowIds, sectionId],
+  );
+  return result.rows.map((row) => ({
+    id: Number(row.id),
+    status: row.status,
+    sourceIdentityKey: row.source_identity_key,
+    sourceContentHash: row.source_content_hash,
+    occurredDate: row.occurred_date,
+    entryType: row.entry_type,
+    item: row.item,
+    memo: row.memo,
+    postingAmount: Number(row.posting_amount),
+    sourceAccountType: row.source_account_type,
+    sourceAccountId: row.source_account_id,
+    categoryAccountId: row.category_account_id,
+    counterpartyAccountType: row.counterparty_account_type,
+    counterpartyAccountId: row.counterparty_account_id,
+    matchedWhooingEntryId: row.matched_whooing_entry_id === null ? null : Number(row.matched_whooing_entry_id),
+    mirrorEntry: row.mirror_entry_id === null || row.mirror_section_id === null || row.mirror_occurred_date === null
+      ? null
+      : {
+        sectionId: row.mirror_section_id,
+        entryId: Number(row.mirror_entry_id),
+        occurredDate: row.mirror_occurred_date,
+      },
+  }));
+}
+
+export async function getImportActionOperation(operationKey: string): Promise<ImportActionOperation | null> {
+  const result = await query<{
+    operation_key: string;
+    status: ImportActionOperation["status"];
+    whooing_entry_id: string | null;
+    error_message: string | null;
+  }>(
+    `
+    select operation_key, status, whooing_entry_id::text, error_message
+    from app.import_write_operations
+    where operation_key = $1
+    `,
+    [operationKey],
+  );
+  const row = result.rows[0];
+  return row ? {
+    operationKey: row.operation_key,
+    status: row.status,
+    whooingEntryId: row.whooing_entry_id === null ? null : Number(row.whooing_entry_id),
+    errorMessage: row.error_message,
+  } : null;
+}
+
+export async function reserveImportActionOperation(input: {
+  rowId: number;
+  operationType: "create" | "update" | "benefit" | "skip" | "review";
+  operationKey: string;
+}) {
+  const result = await query(
+    `
+    with retried as (
+      update app.import_write_operations
+      set status = 'pending', error_message = null, updated_at = now()
+      where operation_key = $3 and status = 'failed'
+      returning id
+    ), inserted as (
+      insert into app.import_write_operations (
+        row_id, operation_type, operation_key, status
+      )
+      select $1, $2, $3, 'pending'
+      where not exists (select 1 from retried)
+      on conflict do nothing
+      returning id
+    )
+    select id from retried
+    union all
+    select id from inserted
+    `,
+    [input.rowId, input.operationType, input.operationKey],
+  );
+  return result.rowCount === 1;
+}
+
+export async function reserveImportMappingOperation(input: {
+  mappingType: ImportMapping["mappingType"];
+  sourceKey: string;
+  operationKey: string;
+}) {
+  const result = await query(
+    `
+    with retried as (
+      update app.import_write_operations
+      set status = 'pending', error_message = null, updated_at = now()
+      where operation_key = $1 and status = 'failed'
+      returning id
+    ), inserted as (
+      insert into app.import_write_operations (
+        row_id, operation_type, operation_key, status, mapping_type, source_key
+      )
+      select null, 'mapping', $1, 'pending', $2, $3
+      where not exists (select 1 from retried)
+      on conflict do nothing
+      returning id
+    )
+    select id from retried
+    union all
+    select id from inserted
+    `,
+    [input.operationKey, input.mappingType, input.sourceKey],
+  );
+  return result.rowCount === 1;
+}
+
+export async function finishImportOperationRecord(input: {
+  operationKey: string;
+  status: "created" | "failed";
+  whooingEntryId?: number | null;
+  errorMessage?: string | null;
+}) {
+  await query(
+    `
+    update app.import_write_operations
+    set status = $2, whooing_entry_id = $3, error_message = $4, updated_at = now()
+    where operation_key = $1
+    `,
+    [input.operationKey, input.status, input.whooingEntryId ?? null, input.errorMessage ?? null],
+  );
+}
+
+export async function finishImportActionOperation(input: {
+  rowId: number;
+  operationType: "create" | "update" | "benefit";
+  operationKey: string;
+  status: "created" | "failed";
+  whooingEntryId: number | null;
+  errorMessage: string | null;
+  rowStatus: "created" | "updated" | "write_failed";
+}) {
+  await withTransaction(async (transactionQuery) => {
+    await transactionQuery(
+      `
+      update app.import_write_operations
+      set status = $2, whooing_entry_id = $3, error_message = $4, updated_at = now()
+      where operation_key = $1
+      `,
+      [input.operationKey, input.status, input.whooingEntryId, input.errorMessage],
+    );
+    await transactionQuery(
+      `
+      update app.import_rows
+      set status = $2,
+          created_whooing_entry_id = case when $2 = 'created' then $3 else created_whooing_entry_id end,
+          matched_whooing_entry_id = case when $2 = 'updated' then $3 else matched_whooing_entry_id end,
+          review_reason = coalesce($4, review_reason), updated_at = now()
+      where id = $1
+      `,
+      [input.rowId, input.rowStatus, input.whooingEntryId, input.errorMessage],
+    );
+  });
+}
+
+export async function markImportRowsReviewed(input: {
+  rowIds: number[];
+  action: "skip" | "review";
+}) {
+  await query(
+    `
+    update app.import_rows
+    set status = $2, review_reason = $3, updated_at = now()
+    where id = any($1::bigint[])
+      and status not in ('created', 'updated', 'duplicate')
+    `,
+    [input.rowIds, input.action === "skip" ? "skipped" : "reviewed", input.action === "skip" ? "운영자가 건너뛰었습니다." : "운영자가 검토 완료로 표시했습니다."],
+  );
+}
+
+export async function listImportActionHistory(limit = 50) {
+  const result = await query<{
+    id: string;
+    row_id: string | null;
+    operation_type: string;
+    status: string;
+    whooing_entry_id: string | null;
+    error_message: string | null;
+    updated_at: Date;
+  }>(
+    `
+    select id::text, row_id::text, operation_type, status,
+           whooing_entry_id::text, error_message, updated_at
+    from app.import_write_operations
+    order by updated_at desc, id desc
+    limit $1
+    `,
+    [Math.min(Math.max(limit, 1), 100)],
+  );
+  return result.rows.map((row) => ({
+    id: Number(row.id),
+    rowId: row.row_id === null ? null : Number(row.row_id),
+    operationType: row.operation_type,
+    status: row.status,
+    whooingEntryId: row.whooing_entry_id === null ? null : Number(row.whooing_entry_id),
+    errorMessage: row.error_message,
+    updatedAt: row.updated_at.toISOString(),
+  }));
 }
