@@ -16,6 +16,7 @@ import {
 } from "@/server/card-benefits/repository";
 import { syncWhooingEntriesForDate } from "@/server/whooing/sync-client";
 import { createWhooingEntry } from "@/server/whooing/write-client";
+import { ledgerOperationStore } from "@/server/ledger/ledger-operation-repository";
 
 export const runtime = "nodejs";
 
@@ -50,11 +51,18 @@ export async function POST(request: NextRequest) {
       createEntry: createWhooingEntry,
       syncForDate: syncWhooingEntriesForDate,
       insertCardBenefitEvent,
+      operationStore: ledgerOperationStore,
     },
   });
 
   if (!result.ok) {
-    const status = result.reason === "whooing_failed" ? 502 : 400;
+    const status = result.reason === "whooing_failed"
+      ? 502
+      : result.reason === "operation_pending"
+        ? 409
+        : result.reason === "operation_unavailable"
+          ? 503
+          : 400;
     return NextResponse.json(result, { status });
   }
 

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getEtlSyncTimeoutMs } from "./sync-client.ts";
+import {
+  getEtlSyncTimeoutMs,
+  getSyncFailureReason,
+  WhooingLocalSyncError,
+} from "./sync-client.ts";
 
 test("getEtlSyncTimeoutMs defaults to at least 15 seconds", () => {
   const previous = process.env.ETL_SYNC_TIMEOUT_MS;
@@ -48,4 +52,20 @@ test("getEtlSyncTimeoutMs falls back for invalid or too short env values", () =>
       process.env.ETL_SYNC_TIMEOUT_MS = previous;
     }
   }
+});
+
+test("getSyncFailureReason preserves ETL unavailable, timeout, and ETL error reasons", () => {
+  assert.equal(
+    getSyncFailureReason(new WhooingLocalSyncError("etl_unavailable", "service unavailable")),
+    "etl_unavailable",
+  );
+  assert.equal(
+    getSyncFailureReason(new WhooingLocalSyncError("timeout", "timed out")),
+    "timeout",
+  );
+  assert.equal(
+    getSyncFailureReason(new WhooingLocalSyncError("etl_error", "status 500")),
+    "etl_error",
+  );
+  assert.equal(getSyncFailureReason(new Error("unexpected")), "unknown");
 });

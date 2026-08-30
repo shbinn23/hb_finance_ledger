@@ -19,6 +19,11 @@ import type { CardBenefitRule } from "../../lib/card-benefits/types.ts";
 import { buildExpenseCardBenefitEventInsert } from "../card-benefits/expense-event.ts";
 import type { CardBenefitEventInsert } from "../card-benefits/repository.ts";
 import { extractWhooingEntryId } from "../whooing/entry-id.ts";
+import { getSyncFailureReason, type SyncFailureReason } from "../whooing/sync-client.ts";
+import type {
+  LedgerOperationBenefitStatus,
+  LedgerOperationStore,
+} from "./ledger-operation-repository.ts";
 
 export type DashboardLedgerEntryType = "expense" | "income" | "transfer" | "card_payment" | "balance_adjustment";
 export type DashboardPaymentAccountType = "assets" | "liabilities";
@@ -45,6 +50,8 @@ export interface DashboardLedgerEntryRequest {
   amount: number;
   memo?: string;
   discountRuleId?: string | null;
+  operationKey?: string;
+  source?: string;
 }
 
 export interface DashboardLedgerEntryDependencies {
@@ -67,6 +74,7 @@ export interface DashboardLedgerEntryDependencies {
   createEntry: (payload: WhooingEntryPayload) => Promise<unknown>;
   syncForDate: (occurredDate: string) => Promise<unknown>;
   insertCardBenefitEvent: (event: CardBenefitEventInsert) => Promise<unknown>;
+  operationStore?: LedgerOperationStore;
 }
 
 export type DashboardLedgerEntryResult =
@@ -74,12 +82,15 @@ export type DashboardLedgerEntryResult =
     ok: true;
     entryStatus: "created";
     entryId: number | null;
-    syncStatus: "synced" | "pending";
+    syncStatus: "synced" | "pending" | "skipped";
+    syncReason: SyncFailureReason | null;
+    benefitStatus: "created" | "skipped" | "pending" | "failed";
+    duplicate?: boolean;
     message: string;
   }
   | {
     ok: false;
-    reason: "unsupported_type" | "invalid_request" | "invalid_account" | "whooing_failed";
+    reason: "unsupported_type" | "invalid_request" | "invalid_account" | "whooing_failed" | "operation_pending" | "operation_unavailable";
     message: string;
     fieldErrors: Record<string, string>;
   };
@@ -88,7 +99,9 @@ type DashboardLedgerEntryFailureReason =
   | "unsupported_type"
   | "invalid_request"
   | "invalid_account"
-  | "whooing_failed";
+  | "whooing_failed"
+  | "operation_pending"
+  | "operation_unavailable";
 
 function invalidResult(
   reason: DashboardLedgerEntryFailureReason,
@@ -102,6 +115,9 @@ function validateCommonRequest(request: DashboardLedgerEntryRequest) {
   const fieldErrors: Record<string, string> = {};
   if (!/^\d{4}-\d{2}-\d{2}$/.test(request.occurredDate)) {
     fieldErrors.occurredDate = "날짜는 YYYY-MM-DD 형식이어야 합니다.";
+  }
+  if (request.operationKey && !/^[A-Za-z0-9:_-]{8,128}$/.test(request.operationKey)) {
+    fieldErrors.operationKey = "작업 식별자가 올바르지 않습니다.";
   }
   if (!Number.isInteger(request.amount) || request.amount <= 0) {
     fieldErrors.amount = "금액은 0보다 큰 정수여야 합니다.";
@@ -295,6 +311,15 @@ function syncPendingLogContext(request: DashboardLedgerEntryRequest, error: unkn
     errorName,
     errorMessage,
     isTimeout: /timeout|timed out|abort/i.test(`${errorName} ${errorMessage}`),
+  };
+}
+
+function benefitFailureLogContext(request: DashboardLedgerEntryRequest, error: unknown) {
+  return {
+    entryType: request.type,
+    occurredDate: request.occurredDate,
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorMessage: error instanceof Error ? error.message : String(error),
   };
 }
 
@@ -492,38 +517,134 @@ export async function createDashboardLedgerEntry({
     return invalidResult("invalid_request", "입력값을 확인해 주세요.");
   }
 
+  const operationStore = request.operationKey ? dependencies.operationStore : undefined;
+  let operationReserved = false;
+  if (operationStore && request.operationKey) {
+    try {
+      const reservation = await operationStore.reserve({
+        operationKey: request.operationKey,
+        source: request.source ?? "dashboard",
+        entryType: request.type,
+        occurredDate: request.occurredDate,
+        amount: request.amount,
+        item: request.item.trim() || successLabel,
+      });
+      operationReserved = reservation.supported && reservation.outcome === "reserved";
+      if (reservation.supported && reservation.outcome === "existing") {
+        if (reservation.record.status === "created") {
+          return {
+            ok: true,
+            entryStatus: "created",
+            entryId: reservation.record.whooingEntryId,
+            syncStatus: reservation.record.syncStatus,
+            syncReason: reservation.record.syncReason,
+            benefitStatus: reservation.record.benefitStatus,
+            duplicate: true,
+            message: "이미 처리된 동일 요청입니다. Whooing에 다시 등록하지 않았습니다.",
+          };
+        }
+        return invalidResult(
+          "operation_pending",
+          "동일 요청이 이미 처리 중입니다. 같은 거래를 다시 등록하지 말고 잠시 후 확인해 주세요.",
+        );
+      }
+    } catch {
+      return invalidResult(
+        "operation_unavailable",
+        "중복 방지 상태를 확인할 수 없어 거래를 등록하지 않았습니다.",
+      );
+    }
+  }
+
+  let entryId: number | null;
   try {
     const response = await dependencies.createEntry(payload);
-    const entryId = extractWhooingEntryId(response);
+    entryId = extractWhooingEntryId(response);
+  } catch {
+    if (operationReserved && operationStore && request.operationKey) {
+      await operationStore.markFailed(request.operationKey, `Whooing ${successLabel} creation failed`).catch(() => undefined);
+    }
+    return invalidResult("whooing_failed", `후잉 ${successLabel} 등록에 실패했습니다.`);
+  }
 
-    if (benefitEvent) {
+  if (operationReserved && operationStore && request.operationKey) {
+    await operationStore.markCreated({
+      operationKey: request.operationKey,
+      whooingEntryId: entryId,
+      syncStatus: "pending",
+      syncReason: null,
+      benefitStatus: benefitEvent ? "pending" : "skipped",
+    }).catch((error) => {
+      console.warn("[ledger-entry] entry created but operation state update failed", {
+        entryType: request.type,
+        occurredDate: request.occurredDate,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  let benefitStatus: "created" | "skipped" | "failed" = benefitEvent ? "created" : "skipped";
+  if (benefitEvent) {
+    try {
       await dependencies.insertCardBenefitEvent({
         ...benefitEvent,
         whooingEntryId: entryId,
       });
-    }
-
-    let syncStatus: "synced" | "pending" = "synced";
-    try {
-      await dependencies.syncForDate(request.occurredDate);
     } catch (error) {
+      benefitStatus = "failed";
       console.warn(
-        "[ledger-entry] Whooing entry created but local sync is pending",
-        syncPendingLogContext(request, error),
+        "[ledger-entry] Whooing entry created but card benefit evidence failed",
+        benefitFailureLogContext(request, error),
       );
-      syncStatus = "pending";
     }
-
-    return {
-      ok: true,
-      entryStatus: "created",
-      entryId,
-      syncStatus,
-      message: syncStatus === "synced"
-        ? `후잉 ${successLabel} 등록 및 대시보드 동기화가 완료되었습니다.`
-        : "후잉 원장 등록은 완료됐지만 대시보드 반영은 지연될 수 있습니다.",
-    };
-  } catch {
-    return invalidResult("whooing_failed", `후잉 ${successLabel} 등록에 실패했습니다.`);
   }
+
+  let syncStatus: "synced" | "pending" = "synced";
+  let syncReason: SyncFailureReason | null = null;
+  try {
+    await dependencies.syncForDate(request.occurredDate);
+  } catch (error) {
+    console.warn(
+      "[ledger-entry] Whooing entry created but local sync is pending",
+      syncPendingLogContext(request, error),
+    );
+    syncStatus = "pending";
+    syncReason = getSyncFailureReason(error);
+  }
+
+  const message = syncReason === "etl_unavailable"
+    ? "ETL 동기화 서비스가 실행 중이 아니어서 대시보드에는 아직 반영되지 않았습니다. 후잉 원장 등록은 완료됐으므로 같은 거래를 다시 등록하지 마세요."
+    : syncStatus === "pending"
+      ? "후잉 원장 등록은 완료됐습니다. 다만 대시보드 반영은 지연될 수 있습니다. 같은 거래를 다시 등록하지 마세요."
+      : benefitStatus === "failed"
+        ? "후잉 원장 등록과 대시보드 동기화는 완료됐지만 카드혜택 근거 저장에 실패했습니다."
+      : `후잉 ${successLabel} 등록 및 대시보드 동기화가 완료되었습니다.`;
+
+  if (operationReserved && operationStore && request.operationKey) {
+    await operationStore.markCreated({
+      operationKey: request.operationKey,
+      whooingEntryId: entryId,
+      syncStatus,
+      syncReason,
+      benefitStatus: benefitStatus as LedgerOperationBenefitStatus,
+    }).catch((error) => {
+      console.warn("[ledger-entry] operation aftercare state update failed", {
+        entryType: request.type,
+        occurredDate: request.occurredDate,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  return {
+    ok: true,
+    entryStatus: "created",
+    entryId,
+    syncStatus,
+    syncReason,
+    benefitStatus,
+    message,
+  };
 }

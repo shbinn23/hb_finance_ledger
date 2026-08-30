@@ -98,6 +98,7 @@ export function DashboardLedgerEntryDialog() {
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const [discountRuleId, setDiscountRuleId] = useState("none");
+  const [operationKey, setOperationKey] = useState(() => crypto.randomUUID());
 
   async function loadEntryOptions() {
     if (options || loadingOptions) return;
@@ -140,6 +141,7 @@ export function DashboardLedgerEntryDialog() {
     setAmount("");
     setMemo("");
     setDiscountRuleId("none");
+    setOperationKey(crypto.randomUUID());
   }
 
   const previewAmount = useMemo(() => {
@@ -182,6 +184,8 @@ export function DashboardLedgerEntryDialog() {
       item,
       amount: Number(amount),
       memo,
+      operationKey,
+      source: "dashboard",
     };
 
     if (entryType === "expense") {
@@ -254,11 +258,11 @@ export function DashboardLedgerEntryDialog() {
       }
 
       setEntryCreated(true);
-      setMessage(
+      setMessage(result.message ?? (
         result.syncStatus === "pending"
           ? "후잉 원장 등록은 완료됐습니다. 다만 대시보드 반영은 지연될 수 있습니다. 같은 거래를 다시 등록하지 말고 화면 갱신 또는 동기화 요청 후 확인해 주세요."
-          : "후잉 원장에 등록했고 대시보드 동기화도 완료했습니다.",
-      );
+          : "후잉 원장에 등록했고 대시보드 동기화도 완료했습니다."
+      ));
       router.refresh();
     } catch {
       setMessage("후잉 지출 등록 요청에 실패했습니다.");

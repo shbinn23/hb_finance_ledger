@@ -5,6 +5,24 @@ import {
   type DashboardLedgerEntryDependencies,
   type DashboardLedgerEntryRequest,
 } from "./ledger-entry-service.ts";
+import type { CardBenefitRule } from "../../lib/card-benefits/types.ts";
+import { WhooingLocalSyncError } from "../whooing/sync-client.ts";
+import type { LedgerOperationStore } from "./ledger-operation-repository.ts";
+
+const mgsRule: CardBenefitRule = {
+  ruleId: "hana_mgs_simple_pay_10p",
+  cardAccountType: "liabilities",
+  cardAccountId: "x45",
+  name: "하나 MG+S 간편결제 10%",
+  status: "active",
+  priority: 10,
+  paymentChannel: "simple_pay",
+  minApprovalAmount: 10_000,
+  discountType: "rate",
+  discountRateBps: 1000,
+  monthlyCapTiers: [{ performanceThreshold: 600_000, monthlyCapAmount: 30_000 }],
+  postingPolicy: "reduce_expense",
+};
 
 function validExpense(overrides: Partial<DashboardLedgerEntryRequest> = {}): DashboardLedgerEntryRequest {
   return {
@@ -137,6 +155,8 @@ test("createDashboardLedgerEntry posts a Whooing expense entry and syncs the ent
   assert.equal(result.ok, true);
   assert.equal(result.entryStatus, "created");
   assert.equal(result.syncStatus, "synced");
+  assert.equal(result.syncReason, null);
+  assert.equal(result.benefitStatus, "skipped");
   assert.equal(result.message, "후잉 지출 등록 및 대시보드 동기화가 완료되었습니다.");
   assert.deepEqual(syncedDates, ["2026-06-10"]);
   assert.deepEqual(createdPayloads, [{
@@ -164,7 +184,7 @@ test("createDashboardLedgerEntry keeps a successful entry when best-effort sync 
     sectionId: "s1",
     dependencies: dependencies({
       syncForDate: async () => {
-        throw new Error("sync failed");
+        throw new WhooingLocalSyncError("etl_unavailable", "service unavailable");
       },
     }),
   });
@@ -173,19 +193,129 @@ test("createDashboardLedgerEntry keeps a successful entry when best-effort sync 
     assert.equal(result.ok, true);
     assert.equal(result.entryStatus, "created");
     assert.equal(result.syncStatus, "pending");
-    assert.equal(result.message, "후잉 원장 등록은 완료됐지만 대시보드 반영은 지연될 수 있습니다.");
+    assert.equal(result.syncReason, "etl_unavailable");
+    assert.equal(result.benefitStatus, "skipped");
+    assert.match(result.message, /ETL 동기화 서비스가 실행 중이 아니어서/);
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0][0], "[ledger-entry] Whooing entry created but local sync is pending");
     assert.deepEqual(warnings[0][1], {
       entryType: "expense",
       occurredDate: "2026-06-10",
-      errorName: "Error",
-      errorMessage: "sync failed",
+      errorName: "WhooingLocalSyncError",
+      errorMessage: "service unavailable",
       isTimeout: false,
     });
   } finally {
     console.warn = originalWarn;
   }
+});
+
+test("createDashboardLedgerEntry keeps a successful entry when benefit persistence fails", async () => {
+  let createCount = 0;
+  const result = await createDashboardLedgerEntry({
+    request: validExpense({
+      paymentAccountType: "liabilities",
+      paymentAccountId: "x45",
+      discountRuleId: "hana_mgs_simple_pay_10p",
+      amount: 10_000,
+    }),
+    sectionId: "s1",
+    dependencies: dependencies({
+      getActiveCardBenefitRules: async () => [mgsRule],
+      buildCardBenefitMonthlyContext: async (benefitMonth) => ({
+        benefitMonth,
+        performanceAmount: 600_000,
+        capUsedByRule: {},
+      }),
+      createEntry: async () => {
+        createCount += 1;
+        return { results: { entry_id: 1426010 } };
+      },
+      insertCardBenefitEvent: async () => {
+        throw new Error("benefit storage failed");
+      },
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.entryStatus, "created");
+  assert.equal(result.entryId, 1426010);
+  assert.equal(result.syncStatus, "synced");
+  assert.equal(result.benefitStatus, "failed");
+  assert.equal(createCount, 1);
+});
+
+test("createDashboardLedgerEntry returns an existing created operation without another Whooing POST", async () => {
+  let createCount = 0;
+  const operationStore: LedgerOperationStore = {
+    reserve: async () => ({
+      supported: true,
+      outcome: "existing",
+      record: {
+        operationKey: "same-key",
+        status: "created",
+        whooingEntryId: 1427000,
+        syncStatus: "pending",
+        syncReason: "etl_unavailable",
+        benefitStatus: "skipped",
+      },
+    }),
+    markCreated: async () => undefined,
+    markFailed: async () => undefined,
+  };
+
+  const result = await createDashboardLedgerEntry({
+    request: validExpense({ operationKey: "same-key" }),
+    sectionId: "s1",
+    dependencies: dependencies({
+      operationStore,
+      createEntry: async () => {
+        createCount += 1;
+        return {};
+      },
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.entryId, 1427000);
+  assert.equal(result.duplicate, true);
+  assert.equal(createCount, 0);
+});
+
+test("createDashboardLedgerEntry blocks an in-progress operation without another Whooing POST", async () => {
+  let createCount = 0;
+  const operationStore: LedgerOperationStore = {
+    reserve: async () => ({
+      supported: true,
+      outcome: "existing",
+      record: {
+        operationKey: "pending-key",
+        status: "pending",
+        whooingEntryId: null,
+        syncStatus: "skipped",
+        syncReason: null,
+        benefitStatus: "skipped",
+      },
+    }),
+    markCreated: async () => undefined,
+    markFailed: async () => undefined,
+  };
+
+  const result = await createDashboardLedgerEntry({
+    request: validExpense({ operationKey: "pending-key" }),
+    sectionId: "s1",
+    dependencies: dependencies({
+      operationStore,
+      createEntry: async () => {
+        createCount += 1;
+        return {};
+      },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "operation_pending");
+  assert.equal(createCount, 0);
 });
 
 test("createDashboardLedgerEntry posts a transfer entry with the Whooing transfer direction", async () => {

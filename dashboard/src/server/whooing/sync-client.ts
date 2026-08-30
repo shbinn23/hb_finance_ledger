@@ -2,16 +2,28 @@ const DEFAULT_ETL_SERVICE_URL = "http://etl-service:8080";
 const DEFAULT_ETL_SYNC_TIMEOUT_MS = 15_000;
 const MIN_ETL_SYNC_TIMEOUT_MS = 5_000;
 
+export type SyncFailureReason = "etl_unavailable" | "timeout" | "etl_error" | "unknown";
+
 export class WhooingLocalSyncError extends Error {
-  constructor(message = "Whooing local sync failed") {
+  readonly reason: SyncFailureReason;
+
+  constructor(
+    reason: SyncFailureReason,
+    message = "Whooing local sync failed",
+  ) {
     super(message);
     this.name = "WhooingLocalSyncError";
+    this.reason = reason;
   }
+}
+
+export function getSyncFailureReason(error: unknown): SyncFailureReason {
+  return error instanceof WhooingLocalSyncError ? error.reason : "unknown";
 }
 
 function toWhooingDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new WhooingLocalSyncError("Invalid sync date");
+    throw new WhooingLocalSyncError("unknown", "Invalid sync date");
   }
 
   return value.replaceAll("-", "");
@@ -49,7 +61,7 @@ export async function syncWhooingEntriesForDate(occurredDate: string) {
     });
 
     if (!response.ok) {
-      throw new WhooingLocalSyncError();
+      throw new WhooingLocalSyncError("etl_error", `Whooing local sync failed with status ${response.status}`);
     }
   } catch (error) {
     if (error instanceof WhooingLocalSyncError) {
@@ -57,10 +69,14 @@ export async function syncWhooingEntriesForDate(occurredDate: string) {
     }
 
     if (error instanceof Error && error.name === "AbortError") {
-      throw new WhooingLocalSyncError("Whooing local sync timed out");
+      throw new WhooingLocalSyncError("timeout", "Whooing local sync timed out");
     }
 
-    throw new WhooingLocalSyncError();
+    if (error instanceof TypeError) {
+      throw new WhooingLocalSyncError("etl_unavailable", "Whooing local sync service is unavailable");
+    }
+
+    throw new WhooingLocalSyncError("unknown");
   } finally {
     clearTimeout(timeout);
   }
