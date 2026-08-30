@@ -16,6 +16,10 @@ const importBenefitReview = readFileSync(
   resolve(migrationRoot, "007_add_import_benefit_review.sql"),
   "utf8",
 );
+const importActionOperations = readFileSync(
+  resolve(migrationRoot, "008_expand_import_action_operations.sql"),
+  "utf8",
+);
 const importRepository = readFileSync(
   resolve(import.meta.dirname, "import-repository.ts"),
   "utf8",
@@ -77,4 +81,17 @@ test("benefit review migration is additive, transactional, and links import rows
   assert.match(importBenefitReview, /add column if not exists benefit_event_id uuid/);
   assert.match(importBenefitReview, /references app\.card_benefit_events\(event_id\)/);
   assert.match(importBenefitReview, /commit;\s*$/i);
+});
+
+test("import action migration expands operation types without applying destructive table changes", () => {
+  assert.match(importActionOperations, /^begin;/i);
+  assert.match(importActionOperations, /operation_type in \([^)]+'update'[^)]+'benefit'[^)]+'mapping'/s);
+  assert.match(importActionOperations, /add column if not exists mapping_type text/);
+  assert.match(importActionOperations, /add column if not exists source_key text/);
+  assert.match(importActionOperations, /operation_type = 'mapping'[\s\S]*row_id is null/);
+  assert.match(importActionOperations, /operation_type <> 'mapping'[\s\S]*row_id is not null/);
+  assert.match(importActionOperations, /status in \([^)]+'updated'[^)]+'skipped'[^)]+'reviewed'/s);
+  assert.match(importActionOperations, /where operation_type in \('create', 'benefit'\)/);
+  assert.doesNotMatch(importActionOperations, /drop table/i);
+  assert.match(importActionOperations, /commit;\s*$/i);
 });
