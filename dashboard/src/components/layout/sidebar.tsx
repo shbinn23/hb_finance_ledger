@@ -12,6 +12,7 @@ import {
   PieChart,
   Scale,
   TrendingUp,
+  Upload,
 } from "lucide-react";
 
 const tabs = [
@@ -25,6 +26,7 @@ const tabs = [
   { id: "analysis", label: "AI 분석", Icon: Brain },
   { id: "ml", label: "ML 인사이트", Icon: BrainCircuit },
   { id: "habits", label: "습관 관리", Icon: Activity },
+  { id: "imports", label: "가져오기", Icon: Upload },
 ];
 
 export function Sidebar() {

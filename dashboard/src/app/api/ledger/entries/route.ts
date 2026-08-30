@@ -1,26 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDashboardLedgerEntry, type DashboardLedgerEntryRequest } from "@/server/ledger/ledger-entry-service";
-import {
-  assetAccountExists,
-  capitalAccountExists,
-  creditCardAccountExists,
-  expenseCategoryExists,
-  incomeCategoryExists,
-  ledgerPaymentAccountExists,
-  liabilityAccountExists,
-} from "@/server/whooing/account-repository";
-import {
-  buildCardBenefitMonthlyContext,
-  getActiveCardBenefitRules,
-  insertCardBenefitEvent,
-} from "@/server/card-benefits/repository";
-import { syncWhooingEntriesForDate } from "@/server/whooing/sync-client";
-import { createWhooingEntry } from "@/server/whooing/write-client";
-import { ledgerOperationStore } from "@/server/ledger/ledger-operation-repository";
+import type { DashboardLedgerEntryRequest } from "@/server/ledger/ledger-entry-service";
+import { createRuntimeDashboardLedgerEntry } from "@/server/ledger/ledger-entry-runtime";
 
 export const runtime = "nodejs";
-
-const sectionId = process.env.WHOOING_SECTION_ID;
 
 export async function POST(request: NextRequest) {
   let payload: DashboardLedgerEntryRequest;
@@ -35,25 +17,7 @@ export async function POST(request: NextRequest) {
     }, { status: 400 });
   }
 
-  const result = await createDashboardLedgerEntry({
-    request: payload,
-    sectionId,
-    dependencies: {
-      assertExpenseCategory: expenseCategoryExists,
-      assertPaymentAccount: ledgerPaymentAccountExists,
-      assertIncomeCategory: incomeCategoryExists,
-      assertAssetAccount: assetAccountExists,
-      assertLiabilityAccount: liabilityAccountExists,
-      assertCreditCardAccount: creditCardAccountExists,
-      assertCapitalAccount: capitalAccountExists,
-      getActiveCardBenefitRules,
-      buildCardBenefitMonthlyContext,
-      createEntry: createWhooingEntry,
-      syncForDate: syncWhooingEntriesForDate,
-      insertCardBenefitEvent,
-      operationStore: ledgerOperationStore,
-    },
-  });
+  const result = await createRuntimeDashboardLedgerEntry(payload);
 
   if (!result.ok) {
     const status = result.reason === "whooing_failed"

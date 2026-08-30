@@ -125,3 +125,29 @@ GET /api/ledger/entry-options
 ```
 
 Supported entry types are expense, income, transfer, card payment, and balance adjustment. `whooing.entries` remains a local mirror: entry creation always goes through the Whooing API, then the selected date is synced on a best-effort basis. If entry creation succeeds but sync is delayed, do not submit the same transaction again.
+
+## Pyeonhan Ledger Import
+
+`/imports` accepts a Pyeonhan Ledger `.xlsx` snapshot and compares its normalized transactions with
+the current `whooing.entries` mirror and prior import snapshots. Results are separated into automatic
+create candidates, duplicates, mapping gaps, update candidates, delete candidates, conflicts, and
+review-required rows. Updates and deletes are never applied automatically. Discounted rows whose card
+benefit rule cannot be identified also remain review-only.
+
+Automatic creation requires both `migrations/004_create_ledger_write_operations.sql` and
+`migrations/005_create_pyeonhan_import_tables.sql`. Without those migrations, `/imports` provides
+read-only dry-run comparison only. Eligible creates use deterministic operation keys through the shared
+ledger write service; Whooing remains the source of truth and local sync remains best-effort.
+
+### Gmail watcher skeleton
+
+Gmail OAuth and network polling are not implemented yet. The current adapter boundary creates a stable
+identity from Gmail message and attachment IDs, then hands downloaded attachment bytes to the import
+pipeline. A future runtime adapter will use:
+
+- `PYEONHAN_GMAIL_QUERY`: Gmail query selecting Pyeonhan Ledger export messages
+- `PYEONHAN_GMAIL_POLL_INTERVAL_MS`: polling interval
+
+Before enabling polling, configure Google OAuth with the minimum `gmail.readonly` scope, durable
+processed-attachment identity storage, attachment size limits, and retry policy. Never commit Gmail
+credentials or tokens.

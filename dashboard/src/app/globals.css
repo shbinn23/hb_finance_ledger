@@ -1085,6 +1085,94 @@ a {
   color: var(--amber);
 }
 
+.import-upload-card {
+  padding: 1.25rem;
+}
+
+.import-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.import-file-field {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: 10px;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  padding: 0.8rem 1rem;
+}
+
+.import-file-field span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-file-field input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.import-feedback,
+.import-warning {
+  margin-top: 0.9rem;
+  color: var(--ink-secondary);
+  font-size: 0.82rem;
+}
+
+.import-warning {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid rgba(201, 121, 20, 0.22);
+  border-radius: 10px;
+  background: rgba(201, 121, 20, 0.06);
+  padding: 0.85rem 1rem;
+}
+
+.import-warning svg {
+  flex: 0 0 auto;
+  color: var(--amber);
+}
+
+.import-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--page-main-gap);
+}
+
+.import-summary-card {
+  min-height: 6.5rem;
+  padding: 1rem;
+}
+
+.import-summary-card strong {
+  display: block;
+  margin-top: 0.9rem;
+  color: var(--ink);
+  font-size: 1.65rem;
+  font-weight: 300;
+}
+
+.import-table {
+  min-width: 72rem;
+}
+
+.import-table td small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--ink-muted);
+}
+
 .fixed-status-processed {
   background: rgba(19, 166, 107, 0.1);
   color: var(--green);
@@ -1910,8 +1998,9 @@ a {
 
   .nav-list {
     display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr));
+    grid-template-columns: repeat(11, minmax(4.5rem, 1fr));
     gap: 0.2rem;
+    overflow-x: auto;
   }
 
   .nav-item {
@@ -1946,8 +2035,14 @@ a {
   }
 
   .metric-grid,
-  .insight-rail {
+  .insight-rail,
+  .import-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .import-upload-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .section-heading {
