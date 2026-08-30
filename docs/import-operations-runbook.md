@@ -71,6 +71,21 @@ For a personal Gmail mailbox, complete Google OAuth consent with scope
 `https://www.googleapis.com/auth/gmail.readonly` and keep the resulting `authorized_user` JSON containing
 `client_id`, `client_secret`, and `refresh_token` outside the repository. Configure either:
 
+Create the `authorized_user` credential once with a Google Cloud **Desktop app** OAuth client JSON:
+
+```bash
+cd dashboard
+npm run gmail:oauth -- \
+  --client /absolute/path/client_secret.json \
+  --output "$HOME/.config/hb_finance_ledger/gmail-authorized-user.json"
+chmod 600 "$HOME/.config/hb_finance_ledger/gmail-authorized-user.json"
+```
+
+The command opens the system browser, requests only `gmail.readonly`, uses a loopback callback with PKCE,
+and stores only the long-lived `authorized_user` fields. It does not print OAuth values. If Google revokes
+or expires the refresh token, rerun the same command and replace the local output file. Do not use a
+service-account JSON for a personal Gmail mailbox.
+
 ```text
 GMAIL_IMPORT_ENABLED=true
 GMAIL_IMPORT_DRY_RUN_ONLY=true
@@ -94,6 +109,10 @@ services:
 Keep the dashboard bound to localhost, or place it behind an authenticated reverse proxy. Browser poll
 requests are restricted to the dashboard origin; direct operator requests without an `Origin` header are
 supported for local `curl` use.
+
+Missing, unsupported, or invalid credentials fail closed as `needs_credentials`; the runtime does not
+fall back to Gmail access or any ledger write. Enabling Gmail import only enables read-only search,
+attachment download, reconciliation, and import review metadata persistence.
 
 ## Manual Gmail dry-run
 

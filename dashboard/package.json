@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "gmail:oauth": "node --experimental-strip-types scripts/gmail-oauth-bootstrap.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",

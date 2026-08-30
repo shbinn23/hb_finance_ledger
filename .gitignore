@@ -2,6 +2,10 @@
 .env
 credentials.json
 token.json
+client_secret_*.json
+gmail-authorized-user.json
+.secrets/
+docker-compose.override.yml
 
 # config.py는 이제 .env를 읽는 로직만 있으므로 공유해도 안전합니다.
 # 만약 여전히 공유하고 싶지 않다면 아래 주석을 해제하세요.
