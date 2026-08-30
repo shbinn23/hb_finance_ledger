@@ -13,7 +13,8 @@ import {
   reserveImportActionOperation,
 } from "./import-repository";
 import { syncWhooingEntriesForDate } from "../whooing/sync-client";
-import { updateWhooingEntry } from "../whooing/write-client";
+import { getWhooingEntry, updateWhooingEntry } from "../whooing/write-client";
+import { executeRuntimePyeonhanBenefitCandidate } from "./pyeonhan-benefit-runtime";
 
 const dependencies = {
   getRows: getImportActionRows,
@@ -41,8 +42,10 @@ export function executeRuntimeApprovedImportUpdate(rowId: number) {
     rowId,
     dependencies: {
       ...dependencies,
+      getCurrentEntry: getWhooingEntry,
       updateEntry: updateWhooingEntry,
       syncForDate: syncWhooingEntriesForDate,
+      approveBenefit: executeRuntimePyeonhanBenefitCandidate,
     },
   });
 }

@@ -172,16 +172,32 @@ function mirrorChanges(row: ReconciledImportRow, entry: MirrorEntry | undefined)
   ));
 }
 
-function isRevisionCandidate(
+function revisionCandidateScore(
   transaction: NormalizedPyeonhanTransaction,
   previous: PreviousImportRow,
 ) {
-  if (transaction.entryType !== previous.entryType) return false;
+  if (transaction.entryType !== previous.entryType) return 0;
   const sameDate = transaction.occurredDate === previous.occurredDate;
   const sameAsset = normalize(transaction.sourceAssetName) === normalize(previous.sourceAssetName);
   const sameItem = normalize(transaction.item) === normalize(previous.item);
   const samePosting = transaction.postingAmount === previous.postingAmount;
-  return (sameDate && sameAsset) || (sameItem && (sameDate || sameAsset || samePosting));
+  if (sameDate && sameAsset && sameItem) return 4;
+  if (sameDate && sameAsset) return 3;
+  if (sameItem && sameAsset) return 2;
+  if (sameItem && sameDate && samePosting) return 1;
+  return 0;
+}
+
+function strongestRevisionCandidates(
+  transaction: NormalizedPyeonhanTransaction,
+  previousRows: PreviousImportRow[],
+) {
+  const scored = previousRows.map((previous) => ({
+    previous,
+    score: revisionCandidateScore(transaction, previous),
+  })).filter(({ score }) => score > 0);
+  const highestScore = Math.max(0, ...scored.map(({ score }) => score));
+  return scored.filter(({ score }) => score === highestScore).map(({ previous }) => previous);
 }
 
 function mappingSuggestions(gap: Omit<ImportMappingGap, "suggestions">, mappings: ImportMapping[]) {
@@ -310,6 +326,8 @@ function expectedSides(row: ReconciledImportRow) {
 
 const ledgerMemoMetadataPrefixes = [
   "승인금액",
+  "입금금액",
+  "이체금액",
   "카드혜택",
   "한도",
   "이론할인액",
@@ -318,7 +336,7 @@ const ledgerMemoMetadataPrefixes = [
   "src=",
 ];
 
-function importComparableMirrorMemo(value: string) {
+export function importComparableMirrorMemo(value: string) {
   const segments = value.split(/\s+\/\s+/);
   const metadataIndex = segments.findIndex((segment) => (
     ledgerMemoMetadataPrefixes.some((prefix) => segment.startsWith(prefix))
@@ -412,13 +430,18 @@ export function reconcilePyeonhanTransactions({
   const currentIdentities = new Set(transactions.map((row) => row.sourceIdentityKey));
   const missingPrevious = previousRows.filter((row) => !currentIdentities.has(row.sourceIdentityKey));
   const newTransactions = transactions.filter((row) => !previousByIdentity.has(row.sourceIdentityKey));
-  const revisionCandidates = new Map(newTransactions.map((transaction) => [
-    transaction.sourceIdentityKey,
-    missingPrevious.filter((previous) => isRevisionCandidate(transaction, previous)),
-  ]));
-  const candidateUseCount = new Map<string, number>();
-  revisionCandidates.forEach((candidates) => candidates.forEach((candidate) => {
-    candidateUseCount.set(candidate.sourceIdentityKey, (candidateUseCount.get(candidate.sourceIdentityKey) ?? 0) + 1);
+  const revisionMatches = new Map(newTransactions.map((transaction) => {
+    const candidates = strongestRevisionCandidates(transaction, missingPrevious);
+    return [transaction.sourceIdentityKey, {
+      candidates,
+      score: candidates[0] ? revisionCandidateScore(transaction, candidates[0]) : 0,
+    }];
+  }));
+  const candidateClaimScores = new Map<string, number[]>();
+  revisionMatches.forEach(({ candidates, score }) => candidates.forEach((candidate) => {
+    const claims = candidateClaimScores.get(candidate.sourceIdentityKey) ?? [];
+    claims.push(score);
+    candidateClaimScores.set(candidate.sourceIdentityKey, claims);
   }));
   const claimedPreviousIdentities = new Set<string>();
   const rows = transactions.map((transaction): ReconciledImportRow => {
@@ -481,9 +504,15 @@ export function reconcilePyeonhanTransactions({
       };
     }
 
-    const replacementCandidates = revisionCandidates.get(transaction.sourceIdentityKey) ?? [];
-    if (replacementCandidates.length === 1
-      && candidateUseCount.get(replacementCandidates[0].sourceIdentityKey) === 1) {
+    const revisionMatch = revisionMatches.get(transaction.sourceIdentityKey);
+    const replacementCandidates = revisionMatch?.candidates ?? [];
+    if ((revisionMatch?.score ?? 0) >= 4
+      && replacementCandidates.length === 1
+      && (() => {
+        const scores = candidateClaimScores.get(replacementCandidates[0].sourceIdentityKey) ?? [];
+        const highest = Math.max(0, ...scores);
+        return revisionMatch?.score === highest && scores.filter((score) => score === highest).length === 1;
+      })()) {
       const replacement = replacementCandidates[0];
       claimedPreviousIdentities.add(replacement.sourceIdentityKey);
       const previousMirror = mirrorEntries.find((entry) => entry.entryId === replacement.matchedWhooingEntryId);
@@ -506,6 +535,17 @@ export function reconcilePyeonhanTransactions({
     }
 
     if (transaction.discountAmount > 0) {
+      if (similarMirror && !exactMirror) {
+        usedMirrorIds.add(similarMirror.entryId);
+        return {
+          ...base,
+          status: "conflict",
+          cardBenefitStatus: "needs_review",
+          reason: "할인 금액과 계정은 같지만 내용이 다른 Whooing 거래가 있어 카드혜택 연결을 중단했습니다.",
+          matchedWhooingEntryId: similarMirror.entryId,
+          mirrorChanges: mirrorChanges(base, similarMirror),
+        };
+      }
       if (similarMirror) usedMirrorIds.add(similarMirror.entryId);
       const eventIntegrity = benefitEventIntegrity(
         transaction,
@@ -547,8 +587,8 @@ export function reconcilePyeonhanTransactions({
       usedMirrorIds.add(similarMirror.entryId);
       return {
         ...base,
-        status: "possible_update",
-        reason: "날짜·금액·계정은 같지만 내용이 다른 Whooing 거래가 있습니다.",
+        status: "conflict",
+        reason: "날짜·금액·계정은 같지만 이전 snapshot 연결 없이 내용이 다른 Whooing 거래가 있습니다.",
         matchedWhooingEntryId: similarMirror.entryId,
         mirrorChanges: mirrorChanges(base, similarMirror),
       };

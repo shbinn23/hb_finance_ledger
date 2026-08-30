@@ -19,6 +19,9 @@ function row(overrides: Partial<ImportActionRow> = {}): ImportActionRow {
     item: "점심",
     memo: "",
     postingAmount: 9000,
+    approvalAmount: 9000,
+    discountAmount: 0,
+    benefitRuleId: null,
     sourceAccountType: "liabilities",
     sourceAccountId: "x45",
     categoryAccountId: "x-food",
@@ -59,6 +62,22 @@ function dependencies(rows: ImportActionRow[], operation?: ImportActionOperation
         };
       },
     },
+  };
+}
+
+function mirrorEntry(overrides: Partial<NonNullable<ImportActionRow["mirrorEntry"]>> = {}) {
+  return {
+    sectionId: "s1",
+    entryId: 91,
+    occurredDate: "2026-08-14",
+    leftAccountType: "expenses",
+    leftAccountId: "x-food",
+    rightAccountType: "liabilities",
+    rightAccountId: "x45",
+    item: "점심",
+    memo: "",
+    amount: 9000,
+    ...overrides,
   };
 }
 
@@ -171,11 +190,7 @@ test("approved update rebuilds the full Whooing payload from persisted evidence"
     status: "possible_update",
     sourceAccountType: "liabilities",
     matchedWhooingEntryId: 91,
-    mirrorEntry: {
-      sectionId: "s1",
-      entryId: 91,
-      occurredDate: "2026-08-14",
-    },
+    mirrorEntry: mirrorEntry(),
   });
   const fixture = dependencies([updateRow]);
   const updated: unknown[] = [];
@@ -184,6 +199,7 @@ test("approved update rebuilds the full Whooing payload from persisted evidence"
     rowId: 1,
     dependencies: {
       ...fixture.dependencies,
+      getCurrentEntry: async () => mirrorEntry(),
       updateEntry: async (entryId, payload) => { updated.push({ entryId, payload }); },
       syncForDate: async (date) => { synced.push(date); },
     },
@@ -207,9 +223,88 @@ test("approved update rebuilds the full Whooing payload from persisted evidence"
   assert.deepEqual(synced, ["2026-08-14", "2026-08-15"]);
 });
 
+test("discounted update applies the exact stored benefit rule after mirror sync", async () => {
+  const updateRow = row({
+    status: "possible_update",
+    sourceAccountType: "liabilities",
+    sourceAccountId: "x50",
+    postingAmount: 8550,
+    matchedWhooingEntryId: 1468607,
+    mirrorEntry: mirrorEntry({
+      entryId: 1468607,
+      occurredDate: "2026-08-30",
+      rightAccountId: "x50",
+    }),
+    approvalAmount: 9000,
+    discountAmount: 450,
+    benefitRuleId: "shinhan_lady_lunch_5p",
+  } as Partial<ImportActionRow>);
+  const fixture = dependencies([updateRow]);
+  const benefits: unknown[] = [];
+  const result = await executeApprovedImportUpdate({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getCurrentEntry: async () => updateRow.mirrorEntry!,
+      updateEntry: async () => undefined,
+      syncForDate: async () => undefined,
+      approveBenefit: async (input: unknown) => {
+        benefits.push(input);
+        return { ok: true, status: "created" as const, eventId: "event-1" };
+      },
+    } as never,
+  });
+
+  assert.equal(result.status, "updated");
+  assert.equal((result as { benefitStatus?: string }).benefitStatus, "created");
+  assert.deepEqual(benefits, [{ importRowId: 1, ruleId: "shinhan_lady_lunch_5p" }]);
+});
+
+test("discounted update keeps benefit pending when sync is pending", async () => {
+  const updateRow = row({
+    status: "possible_update",
+    sourceAccountType: "liabilities",
+    sourceAccountId: "x50",
+    postingAmount: 8550,
+    matchedWhooingEntryId: 1468607,
+    mirrorEntry: mirrorEntry({
+      entryId: 1468607,
+      occurredDate: "2026-08-30",
+      rightAccountId: "x50",
+    }),
+    approvalAmount: 9000,
+    discountAmount: 450,
+    benefitRuleId: "shinhan_lady_lunch_5p",
+  } as Partial<ImportActionRow>);
+  const fixture = dependencies([updateRow]);
+  let benefitCalls = 0;
+  const result = await executeApprovedImportUpdate({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getCurrentEntry: async () => updateRow.mirrorEntry!,
+      updateEntry: async () => undefined,
+      syncForDate: async () => { throw new Error("timeout"); },
+      approveBenefit: async () => {
+        benefitCalls += 1;
+        return { ok: true, status: "created" as const, eventId: "event-1" };
+      },
+    } as never,
+  });
+
+  assert.equal(result.status, "updated");
+  assert.equal(result.syncStatus, "pending");
+  assert.equal((result as { benefitStatus?: string }).benefitStatus, "pending");
+  assert.equal(benefitCalls, 0);
+});
+
 test("update requires one matched mirror entry and reuses a completed content revision", async () => {
   const operationKey = `pyeonhan-update:${"b".repeat(64)}`;
-  const fixture = dependencies([row({ status: "possible_update" })], {
+  const fixture = dependencies([row({
+    status: "possible_update",
+    matchedWhooingEntryId: 91,
+    mirrorEntry: mirrorEntry(),
+  })], {
     operationKey,
     status: "created",
     whooingEntryId: 91,
@@ -219,6 +314,7 @@ test("update requires one matched mirror entry and reuses a completed content re
     rowId: 1,
     dependencies: {
       ...fixture.dependencies,
+      getCurrentEntry: async () => mirrorEntry(),
       updateEntry: async () => { throw new Error("must not update"); },
       syncForDate: async () => undefined,
     },
@@ -230,9 +326,173 @@ test("update requires one matched mirror entry and reuses a completed content re
     rowId: 1,
     dependencies: {
       ...missingMirror.dependencies,
+      getCurrentEntry: async () => null,
       updateEntry: async () => undefined,
       syncForDate: async () => undefined,
     },
   });
   assert.equal(rejected.status, "rejected");
+});
+
+test("update rejects a stale mirror before Whooing PUT", async () => {
+  const updateRow = row({
+    status: "possible_update",
+    matchedWhooingEntryId: 91,
+    mirrorEntry: mirrorEntry(),
+  });
+  const fixture = dependencies([updateRow]);
+  let updates = 0;
+  const result = await executeApprovedImportUpdate({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getCurrentEntry: async () => mirrorEntry({ amount: 9100 }),
+      updateEntry: async () => { updates += 1; },
+      syncForDate: async () => undefined,
+    },
+  });
+
+  assert.equal(result.status, "rejected");
+  assert.equal(updates, 0);
+});
+
+test("identical content revisions with different occurrences use distinct update operations", async () => {
+  const sharedHash = "b".repeat(64);
+  const rows = [
+    row({ id: 1, status: "possible_update", sourceIdentityKey: "a".repeat(64), sourceContentHash: sharedHash, matchedWhooingEntryId: 91, mirrorEntry: mirrorEntry() }),
+    row({ id: 2, status: "possible_update", sourceIdentityKey: "a".repeat(64), sourceContentHash: sharedHash, matchedWhooingEntryId: 92, mirrorEntry: mirrorEntry({ entryId: 92 }) }),
+  ];
+  const operations = new Map<string, ImportActionOperation>();
+  let updates = 0;
+  const fixture = dependencies(rows);
+  const shared = {
+    ...fixture.dependencies,
+    getOperation: async (key: string) => operations.get(key) ?? null,
+    reserveOperation: async ({ operationKey }: { operationKey: string }) => {
+      if (operations.has(operationKey)) return false;
+      operations.set(operationKey, { operationKey, status: "pending", whooingEntryId: null, errorMessage: null });
+      return true;
+    },
+    finishOperation: async ({ operationKey, whooingEntryId }: { operationKey: string; whooingEntryId: number | null }) => {
+      operations.set(operationKey, { operationKey, status: "created", whooingEntryId, errorMessage: null });
+    },
+    getCurrentEntry: async (entryId: number) => rows.find((candidate) => candidate.matchedWhooingEntryId === entryId)?.mirrorEntry ?? null,
+    updateEntry: async () => { updates += 1; },
+    syncForDate: async () => undefined,
+  };
+
+  const first = await executeApprovedImportUpdate({ rowId: 1, dependencies: shared });
+  const second = await executeApprovedImportUpdate({ rowId: 2, dependencies: shared });
+
+  assert.equal(first.status, "updated");
+  assert.equal(second.status, "updated");
+  assert.equal(updates, 2);
+  assert.notEqual(first.operationKey, second.operationKey);
+  assert.ok((first.operationKey?.length ?? 0) <= 128);
+  assert.ok((second.operationKey?.length ?? 0) <= 128);
+});
+
+test("legacy content-only operation is reused only for the same Whooing entry", async () => {
+  const updateRow = row({ status: "possible_update", matchedWhooingEntryId: 91, mirrorEntry: mirrorEntry() });
+  const fixture = dependencies([updateRow]);
+  const legacyKey = `pyeonhan-update:${updateRow.sourceContentHash}`;
+  let updates = 0;
+  const result = await executeApprovedImportUpdate({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getOperation: async (key: string) => key === legacyKey
+        ? { operationKey: key, status: "created", whooingEntryId: 92, errorMessage: null }
+        : null,
+      getCurrentEntry: async () => mirrorEntry(),
+      updateEntry: async () => { updates += 1; },
+      syncForDate: async () => undefined,
+    },
+  });
+
+  assert.equal(result.status, "updated");
+  assert.equal(updates, 1);
+});
+
+test("current update operation is never reused for a different Whooing entry", async () => {
+  const updateRow = row({ status: "possible_update", matchedWhooingEntryId: 91, mirrorEntry: mirrorEntry() });
+  const fixture = dependencies([updateRow]);
+  let updates = 0;
+  const result = await executeApprovedImportUpdate({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getOperation: async (key: string) => key.startsWith("pyeonhan-update:")
+        ? { operationKey: key, status: "created", whooingEntryId: 92, errorMessage: null }
+        : null,
+      getCurrentEntry: async () => mirrorEntry(),
+      updateEntry: async () => { updates += 1; },
+      syncForDate: async () => undefined,
+    },
+  });
+
+  assert.equal(result.status, "rejected");
+  assert.equal(updates, 0);
+});
+
+test("stale pending update finalizes when the remote entry already has the desired payload", async () => {
+  const updateRow = row({
+    status: "possible_update",
+    postingAmount: 8550,
+    matchedWhooingEntryId: 91,
+    mirrorEntry: mirrorEntry(),
+  });
+  const fixture = dependencies([updateRow]);
+  let updates = 0;
+  let operationLookups = 0;
+  const result = await executeApprovedImportUpdate({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getOperation: async (key: string) => {
+        operationLookups += 1;
+        return operationLookups === 1 ? {
+          operationKey: key,
+          status: "pending",
+          whooingEntryId: null,
+          errorMessage: null,
+        } : null;
+      },
+      getCurrentEntry: async () => mirrorEntry({
+        occurredDate: updateRow.occurredDate,
+        amount: 8550,
+      }),
+      updateEntry: async () => { updates += 1; },
+      syncForDate: async () => undefined,
+    },
+  });
+
+  assert.equal(result.status, "updated");
+  assert.equal(updates, 0);
+  assert.equal(fixture.finished.length, 1);
+});
+
+test("an incomplete legacy update operation cannot be hidden by another legacy key", async () => {
+  const updateRow = row({ status: "possible_update", matchedWhooingEntryId: 91, mirrorEntry: mirrorEntry() });
+  const fixture = dependencies([updateRow]);
+  let lookups = 0;
+  let updates = 0;
+  const result = await executeApprovedImportUpdate({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getOperation: async (key: string) => {
+        lookups += 1;
+        if (lookups === 2) return { operationKey: key, status: "created", whooingEntryId: 92, errorMessage: null };
+        if (lookups === 3) return { operationKey: key, status: "pending", whooingEntryId: null, errorMessage: null };
+        return null;
+      },
+      getCurrentEntry: async () => mirrorEntry(),
+      updateEntry: async () => { updates += 1; },
+      syncForDate: async () => undefined,
+    },
+  });
+
+  assert.equal(result.status, "rejected");
+  assert.equal(updates, 0);
 });

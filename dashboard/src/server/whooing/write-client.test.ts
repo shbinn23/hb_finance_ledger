@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWhooingAccount, extractWhooingAccountId, updateWhooingEntry } from "./write-client.ts";
+import { createWhooingAccount, extractWhooingAccountId, getWhooingEntry, updateWhooingEntry } from "./write-client.ts";
 
 const payload = {
   section_id: "s1",
@@ -52,6 +52,44 @@ test("Whooing update uses authenticated PUT for one positive entry id", async ()
 
 test("Whooing update rejects invalid entry ids before fetch", async () => {
   await assert.rejects(() => updateWhooingEntry(0, payload), /Invalid Whooing entry id/);
+});
+
+test("Whooing entry read returns the current immutable comparison snapshot", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = ["WHOOING_APP_ID", "WHOOING_TOKEN", "WHOOING_SIGNATURE"]
+    .map((key) => [key, process.env[key]] as const);
+  process.env.WHOOING_APP_ID = "test-app";
+  process.env.WHOOING_TOKEN = "test-token";
+  process.env.WHOOING_SIGNATURE = "test-signature";
+  let request: { url: string; method: string } | null = null;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), method: String(init?.method) };
+    return new Response(JSON.stringify({
+      code: 200,
+      results: {
+        entry_id: "42", entry_date: 20260815.1,
+        l_account: "expenses", l_account_id: "food",
+        r_account: "assets", r_account_id: "bank",
+        item: "점심", memo: "", money: 9000,
+      },
+    }), { status: 200 });
+  };
+  try {
+    const entry = await getWhooingEntry(42, "s1");
+    assert.equal(request?.url, "https://whooing.com/api/entries/42.json?section_id=s1");
+    assert.equal(request?.method, "GET");
+    assert.deepEqual(entry, {
+      sectionId: "s1", entryId: 42, occurredDate: "2026-08-15",
+      leftAccountType: "expenses", leftAccountId: "food",
+      rightAccountType: "assets", rightAccountId: "bank",
+      item: "점심", memo: "", amount: 9000,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of originalEnv) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
 });
 
 test("Whooing account creation posts a full normal account payload", async () => {

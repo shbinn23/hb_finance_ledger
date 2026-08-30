@@ -120,6 +120,88 @@ test("reconciliation treats metadata-only mirror memo as an empty import memo", 
   assert.equal(result.rows[0].status, "duplicate");
 });
 
+test("reconciliation keeps a mirror-only content mismatch in conflict review", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({ item: "점심" })],
+    mappings,
+    mirrorEntries: [mirror({ item: "쇼핑" })],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "conflict");
+  assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
+});
+
+test("discounted row never becomes rule matched against a different mirror item", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      postingAmount: 8550,
+      approvalAmount: 9000,
+      discountAmount: 450,
+      sourceAssetName: "신한 레이디",
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
+    ],
+    mirrorEntries: [mirror({ rightAccountType: "liabilities", rightAccountId: "x50", item: "쇼핑", amount: 8550 })],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "conflict");
+  assert.notEqual(result.rows[0].cardBenefitStatus, "rule_matched");
+});
+
+test("reconciliation ignores generated income and transfer amount metadata", () => {
+  const income = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      entryType: "income",
+      sourceCategoryName: "근로소득",
+      sourceSubcategoryName: null,
+      item: "월급",
+      memo: "정산",
+      postingAmount: 7700,
+      approvalAmount: 7700,
+    })],
+    mappings,
+    mirrorEntries: [mirror({
+      leftAccountType: "assets",
+      leftAccountId: "a1",
+      rightAccountType: "income",
+      rightAccountId: "i1",
+      item: "월급",
+      memo: "정산 / 입금금액 7,700원 / src=xlsx-20260827-row-4",
+      amount: 7700,
+    })],
+    previousRows: [],
+  });
+  const transfer = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      entryType: "transfer",
+      counterpartyAssetName: "우체국",
+      sourceCategoryName: null,
+      sourceSubcategoryName: null,
+      item: "이체",
+      postingAmount: 100000,
+      approvalAmount: 100000,
+    })],
+    mappings,
+    mirrorEntries: [mirror({
+      leftAccountType: "assets",
+      leftAccountId: "a2",
+      rightAccountType: "assets",
+      rightAccountId: "a1",
+      item: "이체",
+      memo: "이체금액 100,000원 / src=xlsx-20260823-row-10-11",
+      amount: 100000,
+    })],
+    previousRows: [],
+  });
+
+  assert.equal(income.rows[0].status, "duplicate");
+  assert.equal(transfer.rows[0].status, "duplicate");
+});
+
 test("reconciliation detects an existing reciprocal transfer as duplicate", () => {
   const result = reconcilePyeonhanTransactions({
     transactions: [transaction({
@@ -171,6 +253,7 @@ test("reconciliation treats a one-to-one amount identity change as a possible up
     occurredDate: "2026-08-30",
     entryType: "expense",
     sourceAssetName: "국민은행",
+    item: "점심",
   }];
   const result = reconcilePyeonhanTransactions({
     transactions: [transaction({ postingAmount: 10000, approvalAmount: 10000 })],
@@ -184,13 +267,140 @@ test("reconciliation treats a one-to-one amount identity change as a possible up
   assert.equal(result.possibleDeletes.length, 0);
 });
 
+test("reconciliation keeps a different item on the same card and date in conflict review", () => {
+  const previousRows: PreviousImportRow[] = [{
+    sourceIdentityKey: "old-lunch",
+    sourceContentHash: "old-content",
+    status: "duplicate",
+    matchedWhooingEntryId: 1428000,
+    occurredDate: "2026-08-30",
+    entryType: "expense",
+    sourceAssetName: "신한 레이디",
+    item: "점심",
+    postingAmount: 9000,
+    approvalAmount: 9000,
+  }];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      sourceIdentityKey: "new-shopping",
+      sourceContentHash: "new-content",
+      sourceAssetName: "신한 레이디",
+      item: "쇼핑",
+      postingAmount: 8550,
+      approvalAmount: 9000,
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows,
+  });
+
+  assert.equal(result.rows[0].status, "conflict");
+});
+
+test("reconciliation prefers the same-date card row over repeated items from other dates", () => {
+  const previousRows: PreviousImportRow[] = [
+    {
+      sourceIdentityKey: "aug-30-original",
+      sourceContentHash: "aug-30-content",
+      status: "duplicate",
+      matchedWhooingEntryId: 1468607,
+      occurredDate: "2026-08-30",
+      entryType: "expense",
+      sourceAssetName: "신한 레이디",
+      item: "점심",
+      postingAmount: 9000,
+      approvalAmount: 9000,
+    },
+    ...["2026-08-27", "2026-08-25"].map((occurredDate, index) => ({
+      sourceIdentityKey: `older-lunch-${index}`,
+      sourceContentHash: `older-content-${index}`,
+      status: "duplicate",
+      matchedWhooingEntryId: 1468500 + index,
+      occurredDate,
+      entryType: "expense",
+      sourceAssetName: "신한 레이디",
+      item: "점심",
+      postingAmount: 9000,
+      approvalAmount: 9000,
+    })),
+  ];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [
+      transaction({
+        sourceIdentityKey: "aug-30-discounted",
+        sourceContentHash: "aug-30-discounted-content",
+        sourceAssetName: "신한 레이디",
+        postingAmount: 8550,
+        approvalAmount: 9000,
+        discountAmount: 450,
+      }),
+      transaction({
+        occurredDate: "2026-08-31",
+        sourceIdentityKey: "other-new-lunch",
+        sourceContentHash: "other-new-lunch-content",
+        sourceAssetName: "신한 레이디",
+        postingAmount: 8000,
+        approvalAmount: 8000,
+      }),
+    ],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows,
+  });
+
+  assert.equal(result.rows[0].status, "possible_update");
+  assert.equal(result.rows[0].matchedWhooingEntryId, 1468607);
+  assert.deepEqual(result.rows[0].changes.map((change) => change.field), ["postingAmount"]);
+});
+
+test("reconciliation keeps a repeated item from another date in conflict review", () => {
+  const previousRows: PreviousImportRow[] = [{
+    sourceIdentityKey: "aug-30-lunch",
+    sourceContentHash: "aug-30-content",
+    status: "updated",
+    matchedWhooingEntryId: 1468607,
+    occurredDate: "2026-08-30",
+    entryType: "expense",
+    sourceAssetName: "신한 레이디",
+    item: "점심",
+    postingAmount: 8550,
+    approvalAmount: 9000,
+  }];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      occurredDate: "2026-08-25",
+      sourceIdentityKey: "aug-25-lunch",
+      sourceContentHash: "aug-25-content",
+      sourceAssetName: "신한 레이디",
+      postingAmount: 7600,
+      approvalAmount: 8000,
+      discountAmount: 400,
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows,
+  });
+
+  assert.equal(result.rows[0].status, "conflict");
+  assert.equal(result.rows[0].matchedWhooingEntryId, null);
+});
+
 test("reconciliation exposes before and after fields for a conservative one-to-one revision", () => {
   const previousRows: PreviousImportRow[] = [{
     sourceIdentityKey: "old-identity",
     sourceContentHash: "old-content",
     status: "created",
     matchedWhooingEntryId: 1428000,
-    occurredDate: "2026-08-29",
+    occurredDate: "2026-08-30",
     entryType: "expense",
     sourceAssetName: "국민은행",
     counterpartyAssetName: null,
@@ -203,19 +413,18 @@ test("reconciliation exposes before and after fields for a conservative one-to-o
   }];
   const result = reconcilePyeonhanTransactions({
     transactions: [transaction({
-      occurredDate: "2026-08-30",
       memo: "수정 메모",
       postingAmount: 10000,
       approvalAmount: 10000,
     })],
     mappings,
-    mirrorEntries: [mirror({ occurredDate: "2026-08-29" })],
+    mirrorEntries: [mirror()],
     previousRows,
   });
 
   assert.equal(result.rows[0].status, "possible_update");
   assert.deepEqual(result.rows[0].changes.map((change) => change.field), [
-    "occurredDate", "memo", "postingAmount", "approvalAmount",
+    "memo", "postingAmount", "approvalAmount",
   ]);
   assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
   assert.equal(result.possibleDeletes.length, 0);

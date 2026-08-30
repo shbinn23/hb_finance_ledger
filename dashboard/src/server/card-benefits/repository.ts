@@ -655,6 +655,66 @@ export async function insertCardBenefitEvent(event: CardBenefitEventInsert) {
   return result.rows[0]?.event_id ?? null;
 }
 
+export async function updateCardBenefitEvent(
+  eventId: string,
+  event: CardBenefitEventInsert,
+  expected: {
+    updatedAt: string;
+  },
+) {
+  const result = await query<{ event_id: string }>(
+    `
+    update app.card_benefit_events
+    set entry_date = $3,
+        rule_id = $4,
+        card_account_type = $5,
+        card_account_id = $6,
+        expense_account_id = $7,
+        merchant = $8,
+        payment_channel = $9,
+        approval_amount = $10,
+        performance_amount = $11,
+        eligible_discount_amount = $12,
+        applied_discount_amount = $13,
+        posting_amount = $14,
+        cap_used_before = $15,
+        cap_used_after = $16,
+        evaluation_status = $17,
+        evaluation_reason = $18,
+        idempotency_key = $19,
+        updated_at = now()
+    where event_id = $1::uuid
+      and whooing_entry_id = $2
+      and rule_id = $4
+      and updated_at = $20::timestamptz
+    returning event_id::text
+    `,
+    [
+      eventId,
+      event.whooingEntryId,
+      event.entryDate,
+      event.ruleId,
+      event.cardAccountType,
+      event.cardAccountId,
+      event.expenseAccountId ?? null,
+      event.merchant,
+      event.paymentChannel,
+      event.approvalAmount,
+      event.performanceAmount,
+      event.eligibleDiscountAmount,
+      event.appliedDiscountAmount,
+      event.postingAmount,
+      event.capUsedBefore,
+      event.capUsedAfter,
+      event.evaluationStatus,
+      event.evaluationReason,
+      event.idempotencyKey ?? null,
+      expected.updatedAt,
+    ],
+  );
+  return Boolean(result.rows[0]?.event_id);
+}
+
 export async function getCardBenefitMonthlyAssetsSummary(month?: string | null): Promise<CardBenefitAssetsSummary> {
   const benefitMonth = await resolveBenefitMonth(month);
   if (!benefitMonth) {

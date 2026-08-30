@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   DashboardLedgerEntryRequest,
   DashboardLedgerEntryResult,
@@ -14,6 +15,9 @@ export interface ImportActionRow {
   item: string;
   memo: string;
   postingAmount: number;
+  approvalAmount: number;
+  discountAmount: number;
+  benefitRuleId: string | null;
   sourceAccountType: string | null;
   sourceAccountId: string | null;
   categoryAccountId: string | null;
@@ -24,6 +28,13 @@ export interface ImportActionRow {
     sectionId: string;
     entryId: number;
     occurredDate: string;
+    leftAccountType: string;
+    leftAccountId: string;
+    rightAccountType: string;
+    rightAccountId: string;
+    item: string;
+    memo: string;
+    amount: number;
   } | null;
 }
 
@@ -218,8 +229,76 @@ export async function executeImportReviewAction(input: {
 }
 
 export interface ImportUpdateDependencies extends ImportActionDependencies {
+  getCurrentEntry: (entryId: number, sectionId: string) => Promise<NonNullable<ImportActionRow["mirrorEntry"]> | null>;
   updateEntry: (entryId: number, payload: WhooingEntryPayload) => Promise<unknown>;
   syncForDate: (occurredDate: string) => Promise<unknown>;
+  approveBenefit?: (input: { importRowId: number; ruleId: string }) => Promise<{
+    ok: boolean;
+    status: string;
+    eventId?: string | null;
+  }>;
+}
+
+function sameMirrorSnapshot(
+  expected: NonNullable<ImportActionRow["mirrorEntry"]>,
+  current: NonNullable<ImportActionRow["mirrorEntry"]>,
+) {
+  return expected.sectionId === current.sectionId
+    && expected.entryId === current.entryId
+    && expected.occurredDate === current.occurredDate
+    && expected.leftAccountType === current.leftAccountType
+    && expected.leftAccountId === current.leftAccountId
+    && expected.rightAccountType === current.rightAccountType
+    && expected.rightAccountId === current.rightAccountId
+    && expected.item === current.item
+    && expected.memo === current.memo
+    && expected.amount === current.amount;
+}
+
+function sameEntryAsPayload(
+  current: NonNullable<ImportActionRow["mirrorEntry"]>,
+  payload: WhooingEntryPayload,
+) {
+  const occurredDate = payload.entry_date.replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+  return current.sectionId === payload.section_id
+    && current.occurredDate === occurredDate
+    && current.leftAccountType === payload.l_account
+    && current.leftAccountId === payload.l_account_id
+    && current.rightAccountType === payload.r_account
+    && current.rightAccountId === payload.r_account_id
+    && current.item === payload.item
+    && current.memo === (payload.memo ?? "")
+    && current.amount === Number(payload.money);
+}
+
+function updateOperationKey(row: Pick<ImportActionRow, "sourceIdentityKey" | "sourceContentHash" | "matchedWhooingEntryId">) {
+  const digest = createHash("sha256")
+    .update(`${row.sourceIdentityKey}:${row.sourceContentHash}:${row.matchedWhooingEntryId ?? "unmatched"}`)
+    .digest("hex");
+  return `pyeonhan-update:${digest}`;
+}
+
+function previousUpdateOperationKey(row: Pick<ImportActionRow, "sourceIdentityKey" | "sourceContentHash">) {
+  const digest = createHash("sha256")
+    .update(`${row.sourceIdentityKey}:${row.sourceContentHash}`)
+    .digest("hex");
+  return `pyeonhan-update:${digest}`;
+}
+
+async function applyUpdatedBenefit(
+  row: ImportActionRow,
+  syncStatus: "synced" | "pending" | "skipped",
+  dependencies: ImportUpdateDependencies,
+) {
+  if (row.discountAmount <= 0) return "not_applicable" as const;
+  if (!row.benefitRuleId || syncStatus === "pending" || !dependencies.approveBenefit) {
+    return "pending" as const;
+  }
+  const result = await dependencies.approveBenefit({
+    importRowId: row.id,
+    ruleId: row.benefitRuleId,
+  });
+  return result.ok ? result.status : "pending";
 }
 
 function updatePayloadForRow(row: ImportActionRow): WhooingEntryPayload | null {
@@ -273,18 +352,62 @@ export async function executeApprovedImportUpdate(input: {
   dependencies: ImportUpdateDependencies;
 }) {
   const row = (await input.dependencies.getRows([input.rowId]))[0];
-  if (!row || row.status !== "possible_update") {
+  if (!row) {
     return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "승인 가능한 수정 후보가 아닙니다." };
   }
-  const operationKey = `pyeonhan-update:${row.sourceContentHash}`;
-  const existing = await input.dependencies.getOperation(operationKey);
+  const operationKey = updateOperationKey(row);
+  const previousOperationKey = previousUpdateOperationKey(row);
+  const legacyOperationKey = `pyeonhan-update:${row.sourceContentHash}`;
+  const currentOperation = await input.dependencies.getOperation(operationKey);
+  const previousOperation = await input.dependencies.getOperation(previousOperationKey);
+  const legacyOperation = await input.dependencies.getOperation(legacyOperationKey);
+  if (
+    currentOperation
+    && currentOperation.whooingEntryId !== null
+    && currentOperation.whooingEntryId !== row.matchedWhooingEntryId
+  ) {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "수정 이력의 Whooing 거래가 현재 후보와 다릅니다." };
+  }
+  const compatiblePrevious = [previousOperation, legacyOperation].find((operation) => (
+    operation?.status === "created" && operation.whooingEntryId === row.matchedWhooingEntryId
+  )) ?? null;
+  const incompletePrevious = [previousOperation, legacyOperation].find((operation) => (
+    operation && operation.status !== "created"
+  ));
+  if (incompletePrevious) {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "이전 형식의 미완료 수정 이력이 있어 수동 확인이 필요합니다." };
+  }
+  const existing = currentOperation ?? compatiblePrevious;
   if (existing?.status === "created") {
-    return { ok: true, status: "reused" as const, syncStatus: "skipped" as const, entryId: existing.whooingEntryId, operationKey, message: "이미 반영된 수정입니다." };
+    const benefitStatus = await applyUpdatedBenefit(row, "skipped", input.dependencies);
+    return { ok: true, status: "reused" as const, syncStatus: "skipped" as const, benefitStatus, entryId: existing.whooingEntryId, operationKey: existing.operationKey, message: "이미 반영된 수정입니다." };
+  }
+  if (row.status !== "possible_update") {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "승인 가능한 수정 후보가 아닙니다." };
   }
   const payload = updatePayloadForRow(row);
   const previousDate = row.mirrorEntry?.occurredDate;
   if (!payload || !row.matchedWhooingEntryId || !previousDate) {
     return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "매칭된 Whooing 거래 또는 mapping을 확인할 수 없습니다." };
+  }
+  let currentEntry: NonNullable<ImportActionRow["mirrorEntry"]> | null = null;
+  try {
+    currentEntry = await input.dependencies.getCurrentEntry(
+      row.matchedWhooingEntryId,
+      row.mirrorEntry!.sectionId,
+    );
+  } catch {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "Whooing 원본 거래의 최신 상태를 확인할 수 없습니다." };
+  }
+  const remoteAlreadyUpdated = Boolean(
+    currentEntry
+    && currentOperation
+    && (currentOperation.status === "pending" || currentOperation.status === "failed")
+    && (currentOperation.whooingEntryId === null || currentOperation.whooingEntryId === row.matchedWhooingEntryId)
+    && sameEntryAsPayload(currentEntry, payload),
+  );
+  if (!currentEntry || (!sameMirrorSnapshot(row.mirrorEntry!, currentEntry) && !remoteAlreadyUpdated)) {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "Whooing 원본 거래가 import 검토 이후 변경되어 수정을 중단했습니다." };
   }
   const reserved = await input.dependencies.reserveOperation({
     rowId: row.id,
@@ -295,7 +418,9 @@ export async function executeApprovedImportUpdate(input: {
     return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "동일 수정이 처리 중입니다." };
   }
   try {
-    await input.dependencies.updateEntry(row.matchedWhooingEntryId, payload);
+    if (!remoteAlreadyUpdated) {
+      await input.dependencies.updateEntry(row.matchedWhooingEntryId, payload);
+    }
   } catch {
     await input.dependencies.finishOperation({
       rowId: row.id,
@@ -326,12 +451,14 @@ export async function executeApprovedImportUpdate(input: {
     errorMessage: syncStatus === "pending" ? "Whooing 수정 완료, local sync pending" : null,
     rowStatus: "updated",
   });
+  const benefitStatus = await applyUpdatedBenefit(row, syncStatus, input.dependencies);
   return {
     ok: true,
     status: "updated" as const,
     syncStatus,
     entryId: row.matchedWhooingEntryId,
     operationKey,
+    benefitStatus,
     message: syncStatus === "pending"
       ? "Whooing 수정은 완료됐지만 대시보드 반영은 지연될 수 있습니다."
       : "Whooing 거래 수정과 대시보드 동기화를 완료했습니다.",

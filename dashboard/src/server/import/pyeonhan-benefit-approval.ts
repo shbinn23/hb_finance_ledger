@@ -1,5 +1,6 @@
 export type BenefitApprovalStatus =
   | "created"
+  | "updated"
   | "event_exists"
   | "rejected"
   | "failed";
@@ -12,6 +13,8 @@ export interface BenefitApprovalMirrorEntry {
   leftAccountId: string;
   rightAccountType: string;
   rightAccountId: string;
+  item: string;
+  memo: string;
   amount: number;
 }
 
@@ -42,6 +45,17 @@ export interface BenefitApprovalCandidate {
   mirrorEntry: BenefitApprovalMirrorEntry | null;
   rule: BenefitApprovalRule;
   existingEventId: string | null;
+  existingEvent?: {
+    eventId: string;
+    whooingEntryId: number;
+    ruleId: string;
+    updatedAt: string;
+    approvalAmount: number;
+    performanceAmount: number;
+    eligibleDiscountAmount: number;
+    appliedDiscountAmount: number;
+    postingAmount: number;
+  } | null;
 }
 
 export interface ImportBenefitEventInsert {
@@ -69,6 +83,11 @@ export interface ImportBenefitEventInsert {
 export interface BenefitApprovalDependencies {
   getCandidate: (importRowId: number) => Promise<BenefitApprovalCandidate | null>;
   createEvent: (event: ImportBenefitEventInsert) => Promise<string | null>;
+  updateEvent?: (
+    eventId: string,
+    event: ImportBenefitEventInsert,
+    expected: NonNullable<BenefitApprovalCandidate["existingEvent"]>,
+  ) => Promise<boolean>;
   updateBenefitStatus: (input: {
     importRowId: number;
     status: "needs_review" | "approved" | "event_exists" | "created" | "failed";
@@ -93,6 +112,23 @@ function compactDate(value: string) {
   return Number(value.replaceAll("-", ""));
 }
 
+const generatedMemoPrefixes = [
+  "승인금액", "입금금액", "이체금액", "적용혜택", "이론할인액",
+  "적용할인액", "후잉등록금액", "src=",
+];
+
+function normalize(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function comparableMirrorMemo(value: string) {
+  const segments = value.split(/\s+\/\s+/);
+  const metadataIndex = segments.findIndex((segment) => (
+    generatedMemoPrefixes.some((prefix) => segment.startsWith(prefix))
+  ));
+  return normalize((metadataIndex < 0 ? segments : segments.slice(0, metadataIndex)).join(" / "));
+}
+
 export async function approvePyeonhanBenefitCandidate(
   input: { importRowId: number; ruleId: string },
   dependencies: BenefitApprovalDependencies,
@@ -100,21 +136,6 @@ export async function approvePyeonhanBenefitCandidate(
   const candidate = await dependencies.getCandidate(input.importRowId);
   if (!candidate) return rejected("카드혜택 import row를 찾을 수 없습니다.");
   if (candidate.candidateRuleId !== input.ruleId) return rejected("검토 저장된 rule과 요청 rule이 다릅니다.");
-  if (candidate.existingEventId) {
-    await dependencies.updateBenefitStatus({
-      importRowId: input.importRowId,
-      status: "event_exists",
-      eventId: candidate.existingEventId,
-      reason: "동일한 Whooing 거래에 카드혜택 event가 이미 있습니다.",
-    });
-    return {
-      ok: true,
-      status: "event_exists",
-      benefitStatus: "event_exists",
-      eventId: candidate.existingEventId,
-      message: "기존 카드혜택 event가 있어 중복 생성하지 않았습니다.",
-    };
-  }
   const mirror = candidate.mirrorEntry;
   if (!mirror || candidate.matchedWhooingEntryId !== mirror.entryId) {
     return rejected("매칭된 Whooing mirror 거래를 확인할 수 없습니다.");
@@ -134,8 +155,10 @@ export async function approvePyeonhanBenefitCandidate(
     || mirror.leftAccountType !== "expenses"
     || mirror.amount !== candidate.postingAmount
     || mirror.entryDate !== compactDate(candidate.occurredDate)
+    || normalize(mirror.item) !== normalize(candidate.item)
+    || comparableMirrorMemo(mirror.memo) !== normalize(candidate.memo)
   ) {
-    return rejected("카드 mapping과 Whooing 거래의 날짜·계정·매입금액이 일치하지 않습니다.");
+    return rejected("카드 mapping과 Whooing 거래의 날짜·계정·내용·매입금액이 일치하지 않습니다.");
   }
   const rule = candidate.rule;
   if (
@@ -154,33 +177,82 @@ export async function approvePyeonhanBenefitCandidate(
     ? candidate.postingAmount
     : candidate.approvalAmount;
   const idempotencyKey = `pyeonhan-benefit:${candidate.sourceIdentityKey}:${candidate.occurrenceIndex}`;
+  const event: ImportBenefitEventInsert = {
+    sectionId: mirror.sectionId,
+    whooingEntryId: mirror.entryId,
+    entryDate: mirror.entryDate,
+    ruleId: rule.ruleId,
+    cardAccountType: "liabilities",
+    cardAccountId: rule.cardAccountId,
+    expenseAccountId: mirror.leftAccountId,
+    merchant: candidate.item,
+    paymentChannel: rule.paymentChannel ?? "general",
+    approvalAmount: candidate.approvalAmount,
+    performanceAmount,
+    eligibleDiscountAmount,
+    appliedDiscountAmount: candidate.discountAmount,
+    postingAmount: candidate.postingAmount,
+    capUsedBefore: null,
+    capUsedAfter: null,
+    evaluationStatus: "import_approved",
+    evaluationReason: `pyeonhan_import:${candidate.sourceIdentityKey}`,
+    idempotencyKey,
+  };
+  if (candidate.existingEventId) {
+    const existing = candidate.existingEvent;
+    if (existing && (
+      existing.whooingEntryId !== event.whooingEntryId
+      || existing.ruleId !== event.ruleId
+    )) {
+      return rejected("기존 카드혜택 event의 거래 또는 rule이 승인 후보와 다릅니다.");
+    }
+    const matches = !existing || (
+      existing.whooingEntryId === event.whooingEntryId
+      && existing.ruleId === event.ruleId
+      && existing.approvalAmount === event.approvalAmount
+      && existing.performanceAmount === event.performanceAmount
+      && existing.eligibleDiscountAmount === event.eligibleDiscountAmount
+      && existing.appliedDiscountAmount === event.appliedDiscountAmount
+      && existing.postingAmount === event.postingAmount
+    );
+    if (!matches && dependencies.updateEvent) {
+      const updated = await dependencies.updateEvent(candidate.existingEventId, event, existing!);
+      if (!updated) return rejected("기존 카드혜택 event의 안전한 갱신 조건을 확인할 수 없습니다.");
+      await dependencies.updateBenefitStatus({
+        importRowId: input.importRowId,
+        status: "created",
+        eventId: candidate.existingEventId,
+        reason: "카드혜택 event 금액 갱신 완료",
+      });
+      return {
+        ok: true,
+        status: "updated",
+        benefitStatus: "created",
+        eventId: candidate.existingEventId,
+        message: "기존 카드혜택 event를 갱신했습니다.",
+      };
+    }
+    await dependencies.updateBenefitStatus({
+      importRowId: input.importRowId,
+      status: "event_exists",
+      eventId: candidate.existingEventId,
+      reason: "동일한 Whooing 거래에 카드혜택 event가 이미 있습니다.",
+    });
+    return {
+      ok: true,
+      status: "event_exists",
+      benefitStatus: "event_exists",
+      eventId: candidate.existingEventId,
+      message: "기존 카드혜택 event가 있어 중복 생성하지 않았습니다.",
+    };
+  }
   await dependencies.updateBenefitStatus({
     importRowId: input.importRowId,
     status: "approved",
     reason: "운영자가 카드혜택 후보를 승인했습니다.",
   });
   try {
-    const eventId = await dependencies.createEvent({
-      sectionId: mirror.sectionId,
-      whooingEntryId: mirror.entryId,
-      entryDate: mirror.entryDate,
-      ruleId: rule.ruleId,
-      cardAccountType: "liabilities",
-      cardAccountId: rule.cardAccountId,
-      expenseAccountId: mirror.leftAccountId,
-      merchant: candidate.item,
-      paymentChannel: rule.paymentChannel ?? "general",
-      approvalAmount: candidate.approvalAmount,
-      performanceAmount,
-      eligibleDiscountAmount,
-      appliedDiscountAmount: candidate.discountAmount,
-      postingAmount: candidate.postingAmount,
-      capUsedBefore: null,
-      capUsedAfter: null,
-      evaluationStatus: "import_approved",
-      evaluationReason: `pyeonhan_import:${candidate.sourceIdentityKey}`,
-      idempotencyKey,
-    });
+    const eventId = await dependencies.createEvent(event);
     if (!eventId) {
       await dependencies.updateBenefitStatus({
         importRowId: input.importRowId,

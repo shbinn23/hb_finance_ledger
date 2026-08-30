@@ -65,7 +65,7 @@ test("import mappings constrain account types by mapping responsibility", () => 
 });
 
 test("prior import reconciliation only trusts rows backed by ledger evidence", () => {
-  assert.match(importRepository, /status in \('created', 'duplicate'\)/);
+  assert.match(importRepository, /status in \('created', 'updated', 'duplicate'\)/);
   assert.match(importRepository, /row_id = excluded\.row_id/);
 });
 

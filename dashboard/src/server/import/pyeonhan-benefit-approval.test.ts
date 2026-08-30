@@ -30,6 +30,8 @@ function candidate(overrides: Partial<BenefitApprovalCandidate> = {}): BenefitAp
       leftAccountId: "x61",
       rightAccountType: "liabilities",
       rightAccountId: "x50",
+      item: "아워홈",
+      memo: "점심",
       amount: 7315,
     },
     rule: {
@@ -96,6 +98,66 @@ test("benefit approval returns event_exists without inserting a duplicate", asyn
   assert.equal(inserts, 0);
 });
 
+test("benefit approval updates a mismatched event tied to the same entry and rule", async () => {
+  const deps = dependencies(candidate({
+    existingEventId: "event-existing",
+    existingEvent: {
+      eventId: "event-existing",
+      whooingEntryId: 1429001,
+      ruleId: "shinhan_lady_lunch_5p",
+      updatedAt: "2026-08-31T00:00:00.000Z",
+      approvalAmount: 7700,
+      performanceAmount: 7700,
+      eligibleDiscountAmount: 385,
+      appliedDiscountAmount: 0,
+      postingAmount: 7700,
+    },
+  } as Partial<BenefitApprovalCandidate>));
+  const updates: unknown[] = [];
+  (deps as BenefitApprovalDependencies & {
+    updateEvent: (eventId: string, event: unknown) => Promise<boolean>;
+  }).updateEvent = async (eventId, event) => {
+    updates.push({ eventId, event });
+    return true;
+  };
+
+  const result = await approvePyeonhanBenefitCandidate(
+    { importRowId: 11, ruleId: "shinhan_lady_lunch_5p" },
+    deps,
+  );
+
+  assert.equal(result.status, "updated");
+  assert.equal(updates.length, 1);
+  assert.equal((updates[0] as { eventId: string }).eventId, "event-existing");
+});
+
+test("benefit approval never replaces an event from another rule", async () => {
+  const deps = dependencies(candidate({
+    existingEventId: "event-existing",
+    existingEvent: {
+      eventId: "event-existing",
+      whooingEntryId: 1429001,
+      ruleId: "shinhan_lady_medical_5p",
+      updatedAt: "2026-08-31T00:00:00.000Z",
+      approvalAmount: 7700,
+      performanceAmount: 7700,
+      eligibleDiscountAmount: 385,
+      appliedDiscountAmount: 385,
+      postingAmount: 7315,
+    },
+  } as Partial<BenefitApprovalCandidate>));
+  let updates = 0;
+  deps.updateEvent = async () => { updates += 1; return true; };
+
+  const result = await approvePyeonhanBenefitCandidate(
+    { importRowId: 11, ruleId: "shinhan_lady_lunch_5p" },
+    deps,
+  );
+
+  assert.equal(result.status, "rejected");
+  assert.equal(updates, 0);
+});
+
 test("benefit approval rejects client rule changes and invalid amount invariants", async () => {
   const deps = dependencies(candidate({ discountAmount: 384 }));
   const invalidAmounts = await approvePyeonhanBenefitCandidate({ importRowId: 11, ruleId: "shinhan_lady_lunch_5p" }, deps);
@@ -103,4 +165,17 @@ test("benefit approval rejects client rule changes and invalid amount invariants
 
   assert.equal(invalidAmounts.status, "rejected");
   assert.equal(invalidRule.status, "rejected");
+});
+
+test("benefit approval rejects a mirror transaction with a different item", async () => {
+  const deps = dependencies(candidate({
+    mirrorEntry: { ...candidate().mirrorEntry!, item: "쇼핑" },
+  }));
+
+  const result = await approvePyeonhanBenefitCandidate(
+    { importRowId: 11, ruleId: "shinhan_lady_lunch_5p" },
+    deps,
+  );
+
+  assert.equal(result.status, "rejected");
 });

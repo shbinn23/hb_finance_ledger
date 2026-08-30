@@ -233,7 +233,8 @@ export async function getPreviousImportRowsForRange(
       posting_amount::text, approval_amount::text
     from app.import_rows
     where occurred_date between $1::date and $2::date
-      and status in ('created', 'duplicate')
+      and status in ('created', 'updated', 'duplicate')
+      and coalesce(created_whooing_entry_id, matched_whooing_entry_id) is not null
     order by source_identity_key, created_at desc
     `,
     [startDate, endDate],
@@ -674,6 +675,8 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
     l_account_id: string | null;
     r_account: string | null;
     r_account_id: string | null;
+    entry_item: string | null;
+    entry_memo: string | null;
     money: string | null;
     rule_id: string;
     rule_card_account_type: "liabilities";
@@ -682,6 +685,14 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
     discount_rate_bps: number;
     performance_amount_policy: string | null;
     existing_event_id: string | null;
+    existing_event_whooing_entry_id: string | null;
+    existing_event_rule_id: string | null;
+    existing_event_updated_at: string | null;
+    existing_event_approval_amount: string | null;
+    existing_event_performance_amount: string | null;
+    existing_event_eligible_discount_amount: string | null;
+    existing_event_applied_discount_amount: string | null;
+    existing_event_posting_amount: string | null;
   }>(
     `
     select
@@ -692,12 +703,21 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
       mapping.whooing_account_id as mapped_card_account_id,
       r.matched_whooing_entry_id::text,
       e.section_id, e.entry_id::text, floor(e.entry_date)::text as entry_date,
-      e.l_account, e.l_account_id, e.r_account, e.r_account_id, e.money::text,
+      e.l_account, e.l_account_id, e.r_account, e.r_account_id,
+      e.item as entry_item, e.memo as entry_memo, e.money::text,
       rule.rule_id, rule.card_account_type as rule_card_account_type,
       rule.card_account_id as rule_card_account_id, rule.payment_channel,
       rule.discount_rate_bps,
       rule.performance_policy ->> 'performanceAmountPolicy' as performance_amount_policy,
-      existing.event_id::text as existing_event_id
+      existing.event_id::text as existing_event_id,
+      existing.whooing_entry_id::text as existing_event_whooing_entry_id,
+      existing.rule_id as existing_event_rule_id,
+      existing.updated_at::text as existing_event_updated_at,
+      existing.approval_amount::text as existing_event_approval_amount,
+      existing.performance_amount::text as existing_event_performance_amount,
+      existing.eligible_discount_amount::text as existing_event_eligible_discount_amount,
+      existing.applied_discount_amount::text as existing_event_applied_discount_amount,
+      existing.posting_amount::text as existing_event_posting_amount
     from app.import_rows r
     left join app.import_mappings mapping
       on mapping.source = 'pyeonhan_excel'
@@ -711,7 +731,8 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
       on rule.rule_id = r.benefit_rule_id
      and rule.status = 'active'
     left join lateral (
-      select event_id
+      select event_id, whooing_entry_id, rule_id, updated_at, approval_amount, performance_amount,
+             eligible_discount_amount, applied_discount_amount, posting_amount
       from app.card_benefit_events
       where (whooing_entry_id = r.matched_whooing_entry_id and (section_id = $2 or section_id is null))
          or idempotency_key = 'pyeonhan-benefit:' || r.source_identity_key || ':' || r.occurrence_index
@@ -749,6 +770,8 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
         leftAccountId: row.l_account_id ?? "",
         rightAccountType: row.r_account ?? "",
         rightAccountId: row.r_account_id ?? "",
+        item: row.entry_item ?? "",
+        memo: row.entry_memo ?? "",
         amount: Number(row.money),
       },
     rule: {
@@ -762,6 +785,22 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
         : "approval_amount",
     },
     existingEventId: row.existing_event_id,
+    existingEvent: row.existing_event_id === null
+      || row.existing_event_whooing_entry_id === null
+      || row.existing_event_rule_id === null
+      || row.existing_event_updated_at === null
+      ? null
+      : {
+        eventId: row.existing_event_id,
+        whooingEntryId: Number(row.existing_event_whooing_entry_id),
+        ruleId: row.existing_event_rule_id,
+        updatedAt: row.existing_event_updated_at,
+        approvalAmount: Number(row.existing_event_approval_amount),
+        performanceAmount: Number(row.existing_event_performance_amount),
+        eligibleDiscountAmount: Number(row.existing_event_eligible_discount_amount),
+        appliedDiscountAmount: Number(row.existing_event_applied_discount_amount),
+        postingAmount: Number(row.existing_event_posting_amount),
+      },
   };
 }
 
@@ -847,6 +886,9 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
     item: string;
     memo: string;
     posting_amount: string;
+    approval_amount: string;
+    discount_amount: string;
+    benefit_rule_id: string | null;
     source_account_type: string | null;
     source_account_id: string | null;
     category_account_id: string | null;
@@ -856,10 +898,18 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
     mirror_section_id: string | null;
     mirror_entry_id: string | null;
     mirror_occurred_date: string | null;
+    mirror_left_account_type: string | null;
+    mirror_left_account_id: string | null;
+    mirror_right_account_type: string | null;
+    mirror_right_account_id: string | null;
+    mirror_item: string | null;
+    mirror_memo: string | null;
+    mirror_amount: string | null;
   }>(
     `
     select r.id::text, r.status, r.source_identity_key, r.source_content_hash,
            r.occurred_date::text, r.entry_type, r.item, r.memo, r.posting_amount::text,
+           r.approval_amount::text, r.discount_amount::text, r.benefit_rule_id,
            source_mapping.whooing_account_type as source_account_type,
            source_mapping.whooing_account_id as source_account_id,
            category_mapping.whooing_account_id as category_account_id,
@@ -870,7 +920,14 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
            mirror.entry_id::text as mirror_entry_id,
            case when mirror.entry_date is null then null else
              to_char(to_date(floor(mirror.entry_date)::text, 'YYYYMMDD'), 'YYYY-MM-DD')
-           end as mirror_occurred_date
+           end as mirror_occurred_date,
+           mirror.l_account as mirror_left_account_type,
+           mirror.l_account_id as mirror_left_account_id,
+           mirror.r_account as mirror_right_account_type,
+           mirror.r_account_id as mirror_right_account_id,
+           mirror.item as mirror_item,
+           mirror.memo as mirror_memo,
+           mirror.money::text as mirror_amount
     from app.import_rows r
     left join app.import_mappings source_mapping
       on source_mapping.source = 'pyeonhan_excel'
@@ -905,6 +962,9 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
     item: row.item,
     memo: row.memo,
     postingAmount: Number(row.posting_amount),
+    approvalAmount: Number(row.approval_amount),
+    discountAmount: Number(row.discount_amount),
+    benefitRuleId: row.benefit_rule_id,
     sourceAccountType: row.source_account_type,
     sourceAccountId: row.source_account_id,
     categoryAccountId: row.category_account_id,
@@ -917,6 +977,13 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
         sectionId: row.mirror_section_id,
         entryId: Number(row.mirror_entry_id),
         occurredDate: row.mirror_occurred_date,
+        leftAccountType: row.mirror_left_account_type ?? "",
+        leftAccountId: row.mirror_left_account_id ?? "",
+        rightAccountType: row.mirror_right_account_type ?? "",
+        rightAccountId: row.mirror_right_account_id ?? "",
+        item: row.mirror_item ?? "",
+        memo: row.mirror_memo ?? "",
+        amount: Number(row.mirror_amount),
       },
   }));
 }
@@ -1022,7 +1089,15 @@ export async function reserveImportActionOperation(input: {
     with retried as (
       update app.import_write_operations
       set status = 'pending', error_message = null, updated_at = now()
-      where operation_key = $3 and status = 'failed'
+      where operation_key = $3
+        and (
+          status = 'failed'
+          or (
+            status = 'pending'
+            and operation_type in ('update', 'benefit')
+            and updated_at < now() - interval '15 minutes'
+          )
+        )
       returning id
     ), inserted as (
       insert into app.import_write_operations (

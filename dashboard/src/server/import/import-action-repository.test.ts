@@ -26,6 +26,11 @@ test("action repository reserves and finishes operations idempotently", () => {
   assert.match(source, /export async function listImportActionHistory/);
 });
 
+test("only stale update and benefit operations can be recovered from pending", () => {
+  assert.match(source, /operation_type in \('update', 'benefit'\)/);
+  assert.match(source, /updated_at < now\(\) - interval '15 minutes'/);
+});
+
 test("schema capability fails closed until migration 008 columns exist", () => {
   assert.match(source, /actionExecutionSupported/);
   assert.match(source, /column_name in \('mapping_type', 'source_key'\)/);
@@ -37,4 +42,8 @@ test("reused import batches refresh only non-terminal reconciliation state", () 
   assert.match(source, /source_identity_key = \$2/);
   assert.match(source, /occurrence_index = \$3/);
   assert.match(source, /review_count = \$2, duplicate_count = \$3/);
+});
+
+test("previous snapshot evidence requires a linked Whooing entry", () => {
+  assert.match(source, /coalesce\(created_whooing_entry_id, matched_whooing_entry_id\) is not null/);
 });

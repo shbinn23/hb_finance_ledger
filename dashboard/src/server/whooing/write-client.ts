@@ -9,6 +9,19 @@ export interface WhooingApiResponse {
   results?: unknown;
 }
 
+export interface WhooingEntrySnapshot {
+  sectionId: string;
+  entryId: number;
+  occurredDate: string;
+  leftAccountType: string;
+  leftAccountId: string;
+  rightAccountType: string;
+  rightAccountId: string;
+  item: string;
+  memo: string;
+  amount: number;
+}
+
 export type WhooingCreatableAccountType = "assets" | "liabilities" | "expenses" | "income";
 
 export interface WhooingAccountCreatePayload {
@@ -76,6 +89,68 @@ function genericFormBody(payload: object) {
 function safeApiError(payload: WhooingApiResponse, action: "creation" | "update") {
   const message = payload.message ? `: ${payload.message}` : "";
   return `Whooing API rejected entry ${action}${message}`;
+}
+
+function entryDate(value: unknown) {
+  const compact = String(Math.floor(Number(value)));
+  if (!/^\d{8}$/.test(compact)) throw new WhooingWriteClientError("Whooing entry response has an invalid date");
+  return `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
+}
+
+function parseEntrySnapshot(results: unknown, sectionId: string): WhooingEntrySnapshot {
+  const value = results && typeof results === "object" && "rows" in results
+    ? (results as { rows?: unknown[] }).rows?.[0]
+    : results;
+  if (!value || typeof value !== "object") {
+    throw new WhooingWriteClientError("Whooing entry response did not include an entry");
+  }
+  const row = value as Record<string, unknown>;
+  const entryId = Number(row.entry_id);
+  const amount = Number(row.money);
+  const requiredStrings = [
+    row.l_account, row.l_account_id,
+    row.r_account, row.r_account_id, row.item,
+  ];
+  if (!Number.isSafeInteger(entryId) || entryId <= 0 || !Number.isFinite(amount)
+    || requiredStrings.some((field) => typeof field !== "string" || !field)) {
+    throw new WhooingWriteClientError("Whooing entry response is incomplete");
+  }
+  return {
+    sectionId,
+    entryId,
+    occurredDate: entryDate(row.entry_date),
+    leftAccountType: String(row.l_account),
+    leftAccountId: String(row.l_account_id),
+    rightAccountType: String(row.r_account),
+    rightAccountId: String(row.r_account_id),
+    item: String(row.item),
+    memo: typeof row.memo === "string" ? row.memo : "",
+    amount,
+  };
+}
+
+export async function getWhooingEntry(entryId: number, sectionId: string): Promise<WhooingEntrySnapshot> {
+  if (!Number.isSafeInteger(entryId) || entryId <= 0 || !sectionId) {
+    throw new WhooingWriteClientError("Invalid Whooing entry lookup");
+  }
+  const url = new URL(`${WHOOING_API_BASE_URL}/entries/${entryId}.json`);
+  url.searchParams.set("section_id", sectionId);
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { "X-API-KEY": whooingApiKey() },
+  });
+  if (!response.ok) {
+    throw new WhooingWriteClientError("Whooing entry lookup request failed", response.status);
+  }
+  const data = await response.json() as WhooingApiResponse;
+  if (data.code !== undefined && data.code !== 200) {
+    throw new WhooingWriteClientError("Whooing API rejected entry lookup");
+  }
+  const entry = parseEntrySnapshot(data.results, sectionId);
+  if (entry.entryId !== entryId) {
+    throw new WhooingWriteClientError("Whooing entry lookup returned a different entry");
+  }
+  return entry;
 }
 
 export async function createWhooingEntry(payload: WhooingEntryPayload): Promise<WhooingApiResponse> {
