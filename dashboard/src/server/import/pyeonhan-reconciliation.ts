@@ -308,6 +308,24 @@ function expectedSides(row: ReconciledImportRow) {
   };
 }
 
+const ledgerMemoMetadataPrefixes = [
+  "승인금액",
+  "카드혜택",
+  "한도",
+  "이론할인액",
+  "적용할인액",
+  "후잉등록금액",
+  "src=",
+];
+
+function importComparableMirrorMemo(value: string) {
+  const segments = value.split(/\s+\/\s+/);
+  const metadataIndex = segments.findIndex((segment) => (
+    ledgerMemoMetadataPrefixes.some((prefix) => segment.startsWith(prefix))
+  ));
+  return normalize((metadataIndex < 0 ? segments : segments.slice(0, metadataIndex)).join(" / "));
+}
+
 function sameLedgerShape(row: ReconciledImportRow, entry: MirrorEntry, exact: boolean) {
   const sides = expectedSides(row);
   if (
@@ -322,7 +340,7 @@ function sameLedgerShape(row: ReconciledImportRow, entry: MirrorEntry, exact: bo
   }
   return !exact || (
     normalize(entry.item) === normalize(row.transaction.item)
-    && normalize(entry.memo) === normalize(row.transaction.memo)
+    && importComparableMirrorMemo(entry.memo) === normalize(row.transaction.memo)
   );
 }
 

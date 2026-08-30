@@ -498,6 +498,86 @@ export async function createImportReviewBatch(input: {
   return createImportBatch({ ...input, initialStatus: "review" });
 }
 
+export async function refreshImportReviewBatch(input: {
+  batchId: number;
+  sourceFileHash: string;
+  rows: ReconciledImportRow[];
+  possibleDeletes: ReconciledImportRow[];
+}) {
+  return withTransaction(async (transactionQuery) => {
+    await transactionQuery(
+      "select pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [input.sourceFileHash],
+    );
+    const batch = await transactionQuery<{ source_file_hash: string }>(
+      "select source_file_hash from app.import_batches where id = $1 for update",
+      [input.batchId],
+    );
+    if (batch.rows[0]?.source_file_hash !== input.sourceFileHash) {
+      throw new Error("import_batch_source_mismatch");
+    }
+
+    for (const row of input.rows) {
+      await transactionQuery(
+        `
+        update app.import_rows
+        set status = $4, review_reason = $5, matched_whooing_entry_id = $6,
+            benefit_status = $7, benefit_rule_id = $8, benefit_confidence = $9,
+            benefit_reason = $10, benefit_event_id = $11, updated_at = now()
+        where batch_id = $1
+          and source_identity_key = $2
+          and occurrence_index = $3
+          and status not in ('created', 'updated', 'skipped', 'reviewed', 'write_failed')
+        `,
+        [
+          input.batchId,
+          row.transaction.sourceIdentityKey,
+          row.transaction.occurrenceIndex,
+          row.status,
+          row.reason,
+          row.matchedWhooingEntryId,
+          row.cardBenefitStatus,
+          row.cardBenefitCandidate?.ruleId ?? null,
+          row.cardBenefitCandidate?.confidence ?? null,
+          row.cardBenefitCandidate?.reason ?? "",
+          row.cardBenefitStatus === "event_exists"
+            ? await getExistingBenefitEventId(row.matchedWhooingEntryId, transactionQuery)
+            : null,
+        ],
+      );
+    }
+
+    const reviewCount = input.rows.filter((row) => !["auto_creatable", "duplicate"].includes(row.status)).length
+      + input.possibleDeletes.length;
+    await transactionQuery(
+      `
+      update app.import_batches
+      set review_count = $2, duplicate_count = $3, updated_at = now()
+      where id = $1
+      `,
+      [input.batchId, reviewCount, input.rows.filter((row) => row.status === "duplicate").length],
+    );
+
+    const references = await transactionQuery<{
+      id: string;
+      source_identity_key: string;
+      occurrence_index: number;
+    }>(
+      `
+      select id::text, source_identity_key, occurrence_index
+      from app.import_rows
+      where batch_id = $1
+      order by id
+      `,
+      [input.batchId],
+    );
+    return new Map(references.rows.map((row) => [
+      importRowReferenceKey(row.source_identity_key, row.occurrence_index),
+      Number(row.id),
+    ]));
+  });
+}
+
 export async function getLatestReviewRowReferences(sourceFileHash: string) {
   if (!(await getImportSchemaStatus()).importTablesAvailable) return null;
   const result = await query<{

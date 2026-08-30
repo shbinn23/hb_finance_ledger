@@ -22,6 +22,7 @@ __pycache__/
 ### 3. 데이터 및 로그
 data/
 artifacts/
+backups/*.sql
 *.xlsx
 *.csv
 *.log

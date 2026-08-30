@@ -4,11 +4,11 @@ import { runGmailImportDryRunPoll } from "./gmail-import-runtime";
 import {
   createImportReviewBatch,
   getImportBatchForGmailAttachment,
-  getImportRowReferencesForBatch,
   getLatestImportBatchStatus,
   getLatestImportBatchForSourceFile,
   hasProcessedGmailAttachmentIdentity,
   importRowReferenceKey,
+  refreshImportReviewBatch,
 } from "./import-repository";
 import { buildPyeonhanDryRun, validatePyeonhanUpload } from "./pyeonhan-dry-run";
 
@@ -69,11 +69,17 @@ export function runRuntimeGmailImportDryRunPoll() {
         attachment.attachmentId,
       ) ?? await getLatestImportBatchForSourceFile(dryRun.sourceFileHash);
       if (!existing) return null;
+      const rowIds = await refreshImportReviewBatch({
+        batchId: existing.batchId,
+        sourceFileHash: dryRun.sourceFileHash,
+        rows: dryRun.rows,
+        possibleDeletes: dryRun.possibleDeletes,
+      });
       return reviewBatchResult(dryRun, {
         batchId: existing.batchId,
         batchStatus: existing.status,
         reused: true,
-        rowIds: await getImportRowReferencesForBatch(existing.batchId),
+        rowIds,
       });
     },
     importAttachment: async (attachment) => {

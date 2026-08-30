@@ -94,6 +94,32 @@ test("reconciliation matches mirror duplicates one-to-one", () => {
   assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
 });
 
+test("reconciliation ignores appended ledger metadata when comparing an import memo", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({ memo: "원예" })],
+    mappings,
+    mirrorEntries: [mirror({
+      memo: "원예 / 승인금액 44,900원 / src=xlsx-20260827-row-13",
+    })],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "duplicate");
+});
+
+test("reconciliation treats metadata-only mirror memo as an empty import memo", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction()],
+    mappings,
+    mirrorEntries: [mirror({
+      memo: "승인금액 9,000원 / 카드혜택 확인 / src=xlsx-20260830-row-1",
+    })],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "duplicate");
+});
+
 test("reconciliation detects an existing reciprocal transfer as duplicate", () => {
   const result = reconcilePyeonhanTransactions({
     transactions: [transaction({

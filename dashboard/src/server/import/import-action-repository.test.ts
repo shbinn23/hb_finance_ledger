@@ -30,3 +30,11 @@ test("schema capability fails closed until migration 008 columns exist", () => {
   assert.match(source, /actionExecutionSupported/);
   assert.match(source, /column_name in \('mapping_type', 'source_key'\)/);
 });
+
+test("reused import batches refresh only non-terminal reconciliation state", () => {
+  assert.match(source, /export async function refreshImportReviewBatch/);
+  assert.match(source, /status not in \('created', 'updated', 'skipped', 'reviewed', 'write_failed'\)/);
+  assert.match(source, /source_identity_key = \$2/);
+  assert.match(source, /occurrence_index = \$3/);
+  assert.match(source, /review_count = \$2, duplicate_count = \$3/);
+});
