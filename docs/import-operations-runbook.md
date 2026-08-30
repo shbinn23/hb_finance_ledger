@@ -91,6 +91,7 @@ GMAIL_IMPORT_ENABLED=true
 GMAIL_IMPORT_DRY_RUN_ONLY=true
 GMAIL_OAUTH_CREDENTIAL_PATH=/run/secrets/gmail-authorized-user.json
 GMAIL_API_TIMEOUT_MS=15000
+GMAIL_IMPORT_QUERY=has:attachment filename:xlsx newer_than:14d subject:(편한가계부 OR 가계부)
 ```
 
 or the three `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, and
@@ -120,7 +121,7 @@ Recommended email shape:
 
 - Subject contains `편한가계부` or `가계부`.
 - Attachment filename ends in `.xlsx` and is 5MB or smaller.
-- Default query: `has:attachment filename:xlsx subject:(편한가계부 OR 가계부)`.
+- Recommended operational query: `has:attachment filename:xlsx newer_than:14d subject:(편한가계부 OR 가계부)`.
 
 Use the `Gmail dry-run 확인` button on `/imports`, or:
 
@@ -134,6 +135,30 @@ batches; repeated Gmail attachment IDs or repeated SHA-256 file content are reus
 Message-list pagination is followed until completion, and every OAuth/Gmail request has a bounded timeout.
 Batch and row persistence is one database transaction; concurrent processing of the same file hash is
 serialized before the existing review batch is reused.
+Reused batches refresh only non-terminal reconciliation fields against the current mirror. Created,
+updated, skipped, reviewed, and failed rows retain their audit state and operation history.
+
+## 2026-08-31 supervised closeout
+
+- Pre-write backup: `backups/pre_final_import_execution_20260831_010053.sql` (1,314,950 bytes, mode `0600`).
+- Migration 008 was applied and its action-operation columns, checks, and unique indexes were verified.
+- Gmail read-only poll checked 18 messages and 18 XLSX attachments: 6 existing batches were reused and
+  12 invalid or non-target attachments were skipped. No duplicate batch or row was created.
+- Before the supervised writes, latest batch `#20` contained 197 rows: 146 duplicates, 2 auto-creatable
+  rows, 1 mapping-required row, 5 possible updates, and 43 review-required rows. It had 36 existing
+  benefit events, no new rule-matched benefit candidate, and one uncertain benefit row.
+- The supervised write window registered only row `1500` (10,400 KRW expense) and row `1501`
+  (300,000 KRW asset transfer). Both Whooing writes and date-scoped mirror syncs succeeded. A repeated
+  approval created zero additional entries, and duplicate operation-key counts remained zero.
+- Row `1502` was not registered because `신한 9단적금` has no existing Whooing account. All possible
+  updates, refunds/cashback, support-coupon adjustments, uncertain benefits, and delete candidates were
+  left untouched.
+- The final post-sync reconciliation retained 2 created rows, 146 duplicates, 1 mapping-required row,
+  5 possible updates, 2 conflicts, and 41 review-required rows. One possible-delete suggestion remained
+  review-only. Benefit evidence resolved to 35 existing events and 2 uncertain rows; no benefit event was
+  inserted during this closeout.
+- `GMAIL_IMPORT_DRY_RUN_ONLY=true` was restored immediately after verification. Enable `false` only for
+  another supervised approval window, then restore `true` and restart dashboard.
 
 ## Review-only policies
 
