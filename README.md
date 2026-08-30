@@ -145,7 +145,7 @@ ledger write service; Whooing remains the source of truth and local sync remains
 
 ### Gmail import runtime boundary
 
-Gmail OAuth and network polling are intentionally not bundled yet. The runtime boundary creates a stable
+The Gmail runtime uses OAuth refresh credentials and the Gmail REST API with read-only operations. It creates a stable
 identity from Gmail message and attachment IDs, checks the attachment SHA-256 against prior imports,
 then hands new attachment bytes to the import pipeline. Without explicit enablement and credentials,
 system status reports the watcher as disabled or needing credentials and performs no network request.
@@ -159,11 +159,17 @@ requirements are satisfied. It defaults to dry-run-only behavior.
   `has:attachment filename:xlsx subject:(편한가계부 OR 가계부)`.
 - `GMAIL_IMPORT_POLL_INTERVAL_MS`: polling interval in milliseconds; values below 60000 fall back to 300000.
 - `GMAIL_CREDENTIALS_FILE` and `GMAIL_TOKEN_FILE`: preferred mounted OAuth credential/token paths.
+- `GMAIL_OAUTH_CREDENTIAL_PATH` and `GMAIL_TOKEN_PATH`: equivalent explicit path names.
+- `GMAIL_API_TIMEOUT_MS`: per-request Gmail/OAuth timeout; unsafe values below 5000 fall back to 15000.
 - `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, and `GMAIL_OAUTH_REFRESH_TOKEN`: optional
   OAuth-value alternative; never commit real values.
 
-Before enabling polling, configure Google OAuth with the minimum `gmail.readonly` scope, durable
-processed-attachment identity storage, source-file hash lookup, attachment size limits, and retry policy.
+Before enabling polling, configure personal Google OAuth with the minimum `gmail.readonly` scope and an
+`authorized_user` refresh token. A service-account key alone is rejected for personal Gmail. Trigger one
+read-only check with `POST /api/imports/gmail/poll` or the `/imports` button. The database stores Gmail
+message/attachment identity and source-file hash to prevent duplicate review batches.
+Review batch rows are stored atomically, and a database advisory lock serializes concurrent imports of
+the same source hash.
 The watcher must never delete or mutate Gmail messages. Never commit Gmail
 credentials or tokens.
 
