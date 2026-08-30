@@ -1,8 +1,8 @@
 # Import Operations Runbook
 
-This runbook covers the Pyeonhan Ledger Excel/Gmail import pipeline. Gmail access is read-only and
-creates only import review metadata. Whooing writes, automatic registration, and card-benefit approval
-require a separate, explicit operator decision.
+This runbook covers the Pyeonhan Ledger Excel/Gmail import pipeline. Gmail access is always read-only.
+In safe automatic mode, reconciliation may create only fully mapped new ledger entries and exact
+card-benefit events; account creation and existing-entry updates still require explicit operator approval.
 
 ## Docker startup and health
 
@@ -115,7 +115,7 @@ Missing, unsupported, or invalid credentials fail closed as `needs_credentials`;
 fall back to Gmail access or any ledger write. Enabling Gmail import only enables read-only search,
 attachment download, reconciliation, and import review metadata persistence.
 
-## Manual Gmail dry-run
+## Manual Gmail poll
 
 Recommended email shape:
 
@@ -123,20 +123,70 @@ Recommended email shape:
 - Attachment filename ends in `.xlsx` and is 5MB or smaller.
 - Recommended operational query: `has:attachment filename:xlsx newer_than:14d subject:(편한가계부 OR 가계부)`.
 
-Use the `Gmail dry-run 확인` button on `/imports`, or:
+In dry-run mode use `Gmail dry-run 확인`; in safe automatic mode use `Gmail 가져오기 실행`, or:
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:3000/api/imports/gmail/poll
 ```
 
-The response reports `checkedMessages`, `foundAttachments`, `importedBatches`, `reusedBatches`, and safe
-errors. It never submits Whooing transactions or card-benefit events. New Excel files create `review`
-batches; repeated Gmail attachment IDs or repeated SHA-256 file content are reused/skipped.
+The response reports `checkedMessages`, `foundAttachments`, `importedBatches`, `reusedBatches`, execution
+counts, and safe errors. In dry-run mode it does not submit Whooing transactions or card-benefit events.
+In safe automatic mode it may create only the allowlisted transactions and exact card-benefit events
+described below. New Excel files create `review` batches; repeated Gmail attachment IDs or repeated
+SHA-256 file content are reused/skipped.
 Message-list pagination is followed until completion, and every OAuth/Gmail request has a bounded timeout.
 Batch and row persistence is one database transaction; concurrent processing of the same file hash is
 serialized before the existing review batch is reused.
 Reused batches refresh only non-terminal reconciliation fields against the current mirror. Created,
 updated, skipped, reviewed, and failed rows retain their audit state and operation history.
+
+## Safe automatic operation
+
+Use these flags only after migrations through `009_add_import_account_create_operations.sql`, a fresh
+database backup, healthy ETL, and a successful dry-run review:
+
+```text
+GMAIL_IMPORT_DRY_RUN_ONLY=false
+GMAIL_IMPORT_AUTO_EXECUTE_ENABLED=true
+GMAIL_IMPORT_AUTO_EXECUTE_SAFE_ONLY=true
+GMAIL_IMPORT_ACCOUNT_CREATE_ENABLED=true
+GMAIL_IMPORT_ACCOUNT_CREATE_REQUIRES_APPROVAL=true
+```
+
+All three write-mode conditions must agree before poll automation runs. The scheduled
+`gmail-import-worker` calls the dashboard poll route at `GMAIL_IMPORT_POLL_INTERVAL_MS`; it owns no Gmail
+or Whooing credential and logs counts only. A manual poll in `/imports` requires confirmation in this mode.
+
+Automatically allowed:
+
+- fully mapped, positive, non-duplicate `auto_creatable` expense/income rows;
+- exact reciprocal asset transfers;
+- `rule_matched` card-benefit candidates with matching mirror entry, card, amounts, and no existing event.
+
+Never automatic:
+
+- `possible_update` (single-row approval only), `possible_delete`, conflicts, incomplete mappings;
+- refunds, cashback, 민생지원쿠폰/difference income, or uncertain card-benefit rules;
+- new account creation. `/imports` shows a candidate, but the operator must confirm type, section, and name.
+
+Approved account creation first refreshes the local account mirror and reuses an exact normalized account
+when present. Otherwise it creates one normal Whooing account, stores the returned account id in an
+`account_create` operation, refreshes the mirror, saves `app.import_mappings`, and re-polls. A failure after
+Whooing creation is resumable without another account POST. Credit-card-like candidates remain blocked
+because required card fields are absent from the spreadsheet.
+
+To stop all automatic writes without disconnecting Gmail, set `GMAIL_IMPORT_DRY_RUN_ONLY=true`, restart
+dashboard and worker, and confirm `/api/system/status` reports `autoExecuteEnabled=false`.
+
+Before a live window:
+
+```bash
+mkdir -p backups
+umask 177
+docker compose exec -T db sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  > backups/pre_full_auto_import_execution_YYYYMMDD_HHMMSS.sql
+chmod 600 backups/pre_full_auto_import_execution_YYYYMMDD_HHMMSS.sql
+```
 
 ## 2026-08-31 supervised closeout
 
@@ -160,6 +210,31 @@ updated, skipped, reviewed, and failed rows retain their audit state and operati
 - `GMAIL_IMPORT_DRY_RUN_ONLY=true` was restored immediately after verification. Enable `false` only for
   another supervised approval window, then restore `true` and restart dashboard.
 
+## 2026-08-31 safe automatic operation closeout
+
+This section supersedes the dry-run-only runtime state recorded in the supervised closeout above.
+
+- Pre-write backup: `backups/pre_full_auto_import_execution_20260831_013719.sql` (1,378,015 bytes,
+  mode `0600`).
+- Migration 009 was applied and the resumable `account_create` operation fields and constraints were
+  verified.
+- Runtime mode is `dryRunOnly=false`, `autoExecuteEnabled=true`, `safeOnly=true`, with account creation
+  enabled but always requiring explicit confirmation.
+- The live Gmail poll checked 19 messages and 19 XLSX attachments. Seven existing batches were reused,
+  no new batch was created, and no duplicate attachment or source-file batch was inserted.
+- One clear asset candidate, `신한 9단적금`, was explicitly approved. Whooing created asset account
+  `x100` (normalized title `신한9단적금`), the account mirror was refreshed, and the import mapping was
+  saved. The resulting transfer row `1699` created Whooing entry `1468651` for 300,000 KRW.
+- Whooing also generated its normal zero-value opening-balance entry `1468650` when the account was
+  created. This explains the two-entry mirror increase during the account-create window; only one was an
+  imported financial transaction.
+- The final latest batch contains 1 created row, 148 duplicates, 5 possible updates, 2 conflicts, and
+  41 review-required rows. Benefits contain 35 existing events, 2 review rows, and no exact new event.
+- A manual re-poll and the scheduled worker's first poll both reported zero eligible executions and zero
+  failures. Operation keys remain unique, so no account, entry, or benefit event was duplicated.
+- `gmail-import-worker` remains active at the configured interval. It logs only poll counts and calls the
+  same guarded dashboard route; it has no Gmail or Whooing credentials of its own.
+
 ## Review-only policies
 
 - Refund/cashback rows can mean income, expense reversal, or card benefit. They are never automatic.
@@ -181,8 +256,9 @@ export as a new Gmail attachment, then run `Gmail dry-run 확인` once.
   updated automatically from browser-supplied financial fields.
 - **New asset:** an unknown source asset is `mapping_required`. The page shows affected rows, total
   posting amount, and conservative suggestions from existing Whooing accounts. Saving a confirmed
-  mapping changes only `app.import_mappings`. New Whooing account creation is preview-only and must be
-  done manually before mapping.
+  mapping changes only `app.import_mappings`. When account creation is enabled, a clear non-card
+  candidate can be created only after explicit operator confirmation; the account mirror and mapping are
+  refreshed before reconciliation resumes.
 - **Transfer:** reciprocal `이체출금` and `이체입금` rows merge only when date, amount, both assets, and
   memo agree. The UI states `2개 편한가계부 row → 1개 Whooing transfer`. Missing either account mapping
   keeps the transfer in `mapping_required`; an existing mirror transfer becomes `duplicate`.
@@ -214,7 +290,7 @@ explicitly approved write and verify its operation key and mirror result before 
 2. Keep `GMAIL_IMPORT_DRY_RUN_ONLY=true`, poll or upload one workbook, save its review batch, resolve only
    mappings to existing accounts, and rerun reconciliation.
 3. Inspect the persisted row ID, source evidence, mappings, matched mirror entry, approval/posting/discount
-   amounts, and proposed action. Automatic account creation and deletion are unsupported.
+   amounts, and proposed action. New account creation is approval-only; automatic deletion is unsupported.
 4. Set `GMAIL_IMPORT_DRY_RUN_ONLY=false` only for a supervised window and restart dashboard. Gmail polling
    remains read-only; the flag enables only explicitly confirmed create, update, and benefit actions.
 5. Select exactly one `auto_creatable` row and confirm registration. For `possible_update`, approve exactly
@@ -237,8 +313,10 @@ operators must use persisted row approvals from `/imports`.
 5. Execute at most one explicitly approved live action, then verify mirror sync and idempotency before
    continuing.
 
-Gmail poll itself is not a live Whooing operation. It may write only `app.import_batches` and
-`app.import_rows` review metadata. The legacy bulk apply endpoint is retired; do not use it.
+Gmail access itself is read-only. With safe automatic mode disabled, poll writes only import review
+metadata. With safe automatic mode enabled, the same poll may execute only allowlisted create and exact
+benefit operations through their idempotent operation logs. The legacy bulk apply endpoint is retired;
+do not use it.
 
 ## Common issues
 
@@ -246,7 +324,7 @@ Gmail poll itself is not a live Whooing operation. It may write only `app.import
 - `needs_credentials`: provide a personal OAuth refresh token; a service-account key is insufficient.
 - Gmail read failure: verify the refresh token, readonly scope, query, and mounted file permissions.
 - ETL offline or mirror stale: stop review and restore ETL health before trusting reconciliation.
-- `mapping_required`: configure the account/category mapping; do not force automatic creation.
+- `mapping_required`: map an existing account or explicitly approve a clear non-card account candidate.
 - only `event_exists`: all detected discounted transactions already have structured events.
 - `auto_creatable` is zero: the snapshot is already mirrored or requires mappings/review; this is not an error.
 
