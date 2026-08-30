@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Sidebar } from "./sidebar";
 import { RefreshCw, RotateCw } from "lucide-react";
 import { DashboardLedgerEntryDialog } from "./dashboard-ledger-entry-dialog";
+import { SystemStatusPill } from "./system-status-pill";
 
 type SyncStatus = "idle" | "ok" | "error";
 const syncRequestDescription = "GitHub Actions 동기화 workflow를 요청합니다. 반영까지 시간이 걸릴 수 있습니다.";
@@ -48,6 +49,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <p>Private finance dashboard</p>
             <strong>후잉 데이터 기반 운영 화면</strong>
           </div>
+          <SystemStatusPill />
           <button
             onClick={handleSync}
             disabled={syncing}

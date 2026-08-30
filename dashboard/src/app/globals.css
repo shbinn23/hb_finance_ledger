@@ -241,6 +241,25 @@ a {
   opacity: 0.55;
 }
 
+.system-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.15rem;
+  border: 1px solid var(--hairline);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-muted);
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.system-status-pill.delayed {
+  border-color: rgba(217, 119, 6, 0.28);
+  color: #a16207;
+}
+
 .ledger-entry-modal-backdrop {
   position: fixed;
   inset: 0;
