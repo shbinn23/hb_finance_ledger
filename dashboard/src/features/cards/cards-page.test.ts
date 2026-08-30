@@ -31,6 +31,9 @@ test("cards dashboard is split into overview benefits and bills surfaces", () =>
   assert.match(componentSource, /명세서·상환/);
   assert.match(componentSource, /카드별 요약/);
   assert.match(componentSource, /카드별 혜택 한도 상태/);
+  assert.match(componentSource, /전월 실적 추정/);
+  assert.match(componentSource, /legacy 거래를 포함한 전월 실적 추정액/);
+  assert.doesNotMatch(componentSource, /전월 구조화 실적/);
   assert.match(componentSource, /카드대금 상환 Beta/);
   assert.match(componentSource, /visibleCardBillPayments/);
   assert.match(componentSource, /row\.billAmount > 0/);

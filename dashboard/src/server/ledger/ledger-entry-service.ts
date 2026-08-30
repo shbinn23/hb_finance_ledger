@@ -91,6 +91,7 @@ export interface DashboardLedgerEntryDependencies {
 export type DashboardLedgerEntryResult =
   | {
     ok: true;
+    entryStatus: "created";
     entryId: number | null;
     syncStatus: "synced" | "pending";
     message: string;
@@ -301,6 +302,19 @@ function benefitMonthFromDate(value: string) {
 
 function whooingDateValue(value: string) {
   return Number(value.replaceAll("-", ""));
+}
+
+function syncPendingLogContext(request: DashboardLedgerEntryRequest, error: unknown) {
+  const errorName = error instanceof Error ? error.name : typeof error;
+  const errorMessage = error instanceof Error ? error.message : String(error);
+
+  return {
+    entryType: request.type,
+    occurredDate: request.occurredDate,
+    errorName,
+    errorMessage,
+    isTimeout: /timeout|timed out|abort/i.test(`${errorName} ${errorMessage}`),
+  };
 }
 
 function buildBenefitEventInsert({
@@ -543,17 +557,22 @@ export async function createDashboardLedgerEntry({
     let syncStatus: "synced" | "pending" = "synced";
     try {
       await dependencies.syncForDate(request.occurredDate);
-    } catch {
+    } catch (error) {
+      console.warn(
+        "[ledger-entry] Whooing entry created but local sync is pending",
+        syncPendingLogContext(request, error),
+      );
       syncStatus = "pending";
     }
 
     return {
       ok: true,
+      entryStatus: "created",
       entryId,
       syncStatus,
       message: syncStatus === "synced"
-        ? `후잉 ${successLabel} 등록 및 동기화 확인이 완료되었습니다.`
-        : `후잉 ${successLabel} 등록은 완료되었습니다. 대시보드 반영은 잠시 후 확인해 주세요.`,
+        ? `후잉 ${successLabel} 등록 및 대시보드 동기화가 완료되었습니다.`
+        : "후잉 원장 등록은 완료됐지만 대시보드 반영은 지연될 수 있습니다.",
     };
   } catch {
     return invalidResult("whooing_failed", `후잉 ${successLabel} 등록에 실패했습니다.`);

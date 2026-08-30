@@ -1,5 +1,6 @@
 const DEFAULT_ETL_SERVICE_URL = "http://etl-service:8080";
-const ETL_SYNC_TIMEOUT_MS = 1_800;
+const DEFAULT_ETL_SYNC_TIMEOUT_MS = 15_000;
+const MIN_ETL_SYNC_TIMEOUT_MS = 5_000;
 
 export class WhooingLocalSyncError extends Error {
   constructor(message = "Whooing local sync failed") {
@@ -20,10 +21,19 @@ function etlServiceUrl() {
   return (process.env.ETL_SERVICE_URL ?? DEFAULT_ETL_SERVICE_URL).replace(/\/$/, "");
 }
 
+export function getEtlSyncTimeoutMs() {
+  const value = Number(process.env.ETL_SYNC_TIMEOUT_MS);
+  if (!Number.isFinite(value) || value < MIN_ETL_SYNC_TIMEOUT_MS) {
+    return DEFAULT_ETL_SYNC_TIMEOUT_MS;
+  }
+
+  return value;
+}
+
 export async function syncWhooingEntriesForDate(occurredDate: string) {
   const syncDate = toWhooingDate(occurredDate);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ETL_SYNC_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), getEtlSyncTimeoutMs());
 
   try {
     const response = await fetch(`${etlServiceUrl()}/sync/whooing`, {
@@ -44,6 +54,10 @@ export async function syncWhooingEntriesForDate(occurredDate: string) {
   } catch (error) {
     if (error instanceof WhooingLocalSyncError) {
       throw error;
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new WhooingLocalSyncError("Whooing local sync timed out");
     }
 
     throw new WhooingLocalSyncError();

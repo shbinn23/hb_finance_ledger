@@ -135,7 +135,9 @@ test("createDashboardLedgerEntry posts a Whooing expense entry and syncs the ent
   });
 
   assert.equal(result.ok, true);
+  assert.equal(result.entryStatus, "created");
   assert.equal(result.syncStatus, "synced");
+  assert.equal(result.message, "후잉 지출 등록 및 대시보드 동기화가 완료되었습니다.");
   assert.deepEqual(syncedDates, ["2026-06-10"]);
   assert.deepEqual(createdPayloads, [{
     section_id: "s1",
@@ -151,8 +153,14 @@ test("createDashboardLedgerEntry posts a Whooing expense entry and syncs the ent
 });
 
 test("createDashboardLedgerEntry keeps a successful entry when best-effort sync fails", async () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
   const result = await createDashboardLedgerEntry({
-    request: validExpense(),
+    request: validExpense({ type: "expense", occurredDate: "2026-06-10" }),
     sectionId: "s1",
     dependencies: dependencies({
       syncForDate: async () => {
@@ -161,8 +169,23 @@ test("createDashboardLedgerEntry keeps a successful entry when best-effort sync 
     }),
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.syncStatus, "pending");
+  try {
+    assert.equal(result.ok, true);
+    assert.equal(result.entryStatus, "created");
+    assert.equal(result.syncStatus, "pending");
+    assert.equal(result.message, "후잉 원장 등록은 완료됐지만 대시보드 반영은 지연될 수 있습니다.");
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0][0], "[ledger-entry] Whooing entry created but local sync is pending");
+    assert.deepEqual(warnings[0][1], {
+      entryType: "expense",
+      occurredDate: "2026-06-10",
+      errorName: "Error",
+      errorMessage: "sync failed",
+      isTimeout: false,
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
 });
 
 test("createDashboardLedgerEntry posts a transfer entry with the Slack transfer direction", async () => {

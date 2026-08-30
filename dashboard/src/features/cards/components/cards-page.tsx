@@ -38,7 +38,7 @@ function capRemainingText(autoStatus: string, amount: number | null) {
 }
 
 function capStatusDetail(status: CardsViewModel["summary"]["capStatuses"][number]) {
-  if (status.autoStatus === "unknown") return "전월 구조화 실적 없음";
+  if (status.autoStatus === "unknown") return "전월 실적 추정 부족";
   if (status.autoStatus === "not_applicable") return "한도형 rule 아님";
   return "자동 산정";
 }
@@ -338,7 +338,7 @@ function CardCapStatusSection({ model }: CardsPageProps) {
       </CardHeader>
       <CardContent>
         <p className="metric-detail">
-          한도 자동 산정은 전월 구조화 실적금액이 있을 때만 가능합니다.
+          한도 자동 산정은 구조화 혜택 이벤트와 legacy 거래를 포함한 전월 실적 추정액을 기준으로 합니다.
         </p>
         <div className="table-scroll">
           <table className="data-table">
@@ -347,7 +347,7 @@ function CardCapStatusSection({ model }: CardsPageProps) {
                 <th>카드</th>
                 <th>혜택</th>
                 <th>자동 산정 상태</th>
-                <th className="amount">전월 구조화 실적</th>
+                <th className="amount">전월 실적 추정</th>
                 <th className="amount">자동 산정 한도</th>
                 <th className="amount">기록된 할인</th>
                 <th className="amount">자동 잔여 한도</th>

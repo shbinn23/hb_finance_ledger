@@ -246,6 +246,7 @@ test("builds expense ledger modal with card benefit rule options", () => {
     [
       "none",
       "hana_mgs_simple_pay_10p",
+      "hana_mgs_subscription_50p",
       "shinhan_lady_lunch_5p",
       "shinhan_lady_medical_5p",
       "shinhan_lady_shopping_3p",
@@ -256,6 +257,7 @@ test("builds expense ledger modal with card benefit rule options", () => {
     [
       "혜택 없음",
       "하나 MG+S · 간편결제 10%",
+      "하나 MG+S · 구독 50%",
       "신한 레이디 · 점심 5%",
       "신한 레이디 · 병원/약국 5%",
       "신한 레이디 · 쇼핑 3%",
@@ -326,7 +328,7 @@ test("rejects selected card benefit when automatic cap cannot be calculated", ()
     (error) => (
       error instanceof ExpensePostingValidationError
       && error.blockId === EXPENSE_BLOCK_IDS.discountRuleId
-      && /전월 구조화 실적/.test(error.message)
+      && /전월 실적 추정/.test(error.message)
     ),
   );
 });

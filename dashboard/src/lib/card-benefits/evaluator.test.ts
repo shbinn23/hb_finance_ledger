@@ -37,6 +37,16 @@ const shinhanLadyLunchRule: CardBenefitRule = {
   postingPolicy: "reduce_expense",
 };
 
+const mgsSubscriptionRule = {
+  ...mgsRule,
+  ruleId: "hana_mgs_subscription_50p",
+  name: "하나 MG+S 구독 50%",
+  priority: 11,
+  minApprovalAmount: null,
+  discountRateBps: 5000,
+  capUsageRuleId: "hana_mgs_simple_pay_10p",
+} satisfies CardBenefitRule;
+
 function input(overrides: Partial<Parameters<typeof evaluateCardBenefit>[0]> = {}) {
   return {
     occurredDate: "2026-05-17",
@@ -140,6 +150,26 @@ test("MG+S applies only remaining monthly cap", () => {
   assert.equal(result.appliedDiscountAmount, 1_000);
   assert.equal(result.postingAmount, 99_000);
   assert.equal(result.capUsedBefore, 59_000);
+  assert.equal(result.capUsedAfter, 60_000);
+});
+
+test("MG+S subscription uses the shared card cap and applies only 833 won", () => {
+  const result = evaluateCardBenefit(input({
+    selectedRuleId: "hana_mgs_subscription_50p",
+    approvalAmount: 159_000,
+    rules: [mgsRule, mgsSubscriptionRule],
+    monthlyContext: {
+      benefitMonth: "2026-08",
+      performanceAmount: 1_000_000,
+      capUsedByRule: { hana_mgs_simple_pay_10p: 59_167 },
+    },
+  }));
+
+  assert.equal(result.ruleId, "hana_mgs_subscription_50p");
+  assert.equal(result.eligibleDiscountAmount, 79_500);
+  assert.equal(result.appliedDiscountAmount, 833);
+  assert.equal(result.postingAmount, 158_167);
+  assert.equal(result.capUsedBefore, 59_167);
   assert.equal(result.capUsedAfter, 60_000);
 });
 

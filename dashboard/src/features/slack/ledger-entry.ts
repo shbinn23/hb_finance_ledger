@@ -73,6 +73,7 @@ export const BALANCE_ADJUSTMENT_ACTION_IDS = BALANCE_ADJUSTMENT_BLOCK_IDS;
 export const DISCOUNT_RULES = [
   { id: "none", label: "혜택 없음", type: "none" },
   { id: "hana_mgs_simple_pay_10p", label: "하나 MG+S · 간편결제 10%", type: "card_benefit" },
+  { id: "hana_mgs_subscription_50p", label: "하나 MG+S · 구독 50%", type: "card_benefit" },
   { id: "shinhan_lady_lunch_5p", label: "신한 레이디 · 점심 5%", type: "card_benefit" },
   { id: "shinhan_lady_medical_5p", label: "신한 레이디 · 병원/약국 5%", type: "card_benefit" },
   { id: "shinhan_lady_shopping_3p", label: "신한 레이디 · 쇼핑 3%", type: "card_benefit" },
@@ -508,7 +509,7 @@ function mergedCardBenefitMemo(
     `이론할인액 ${won(evaluation.eligibleDiscountAmount)}`,
     `적용할인액 ${won(evaluation.appliedDiscountAmount)}`,
     `후잉등록금액 ${won(evaluation.postingAmount)}`,
-    evaluation.reason === "automatic_cap_unavailable" ? "카드혜택 미적용: 전월 구조화 실적 없음" : "",
+    evaluation.reason === "automatic_cap_unavailable" ? "카드혜택 미적용: 전월 실적 추정 부족" : "",
   ].filter(Boolean);
 
   return parts.join(" / ");
@@ -547,7 +548,7 @@ export function buildExpensePostingFromCardBenefit(
   if (evaluation.reason === "automatic_cap_unavailable") {
     throw new ExpensePostingValidationError(
       EXPENSE_BLOCK_IDS.discountRuleId,
-      "전월 구조화 실적이 없어 이 카드혜택 한도를 자동 산정할 수 없습니다.",
+      "전월 실적 추정이 부족해 이 카드혜택 한도를 자동 산정할 수 없습니다.",
     );
   }
   if (!Number.isInteger(evaluation.postingAmount) || evaluation.postingAmount <= 0) {

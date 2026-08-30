@@ -12,6 +12,7 @@ export type CardBenefitRule = {
   discountType: "rate";
   discountRateBps: number;
   monthlyCapTiers: CardBenefitMonthlyCapTier[];
+  capUsageRuleId?: string | null;
   postingPolicy: "reduce_expense" | "memo_only" | "separate_income";
 };
 

@@ -98,13 +98,13 @@ test("calculateCardPerformanceEstimate uses legacy posting when structured perfo
   assert.equal(estimate.dataQuality, "legacy_estimate");
 });
 
-test("calculateBenefitCapStatus marks cap unknown without previous structured performance", () => {
+test("calculateBenefitCapStatus marks cap unknown without previous performance estimate", () => {
   const status = calculateBenefitCapStatus({
     monthlyCapTiers: [
       { performanceThreshold: 300_000, monthlyCapAmount: 15_000 },
       { performanceThreshold: 600_000, monthlyCapAmount: 30_000 },
     ],
-    previousMonthStructuredPerformance: 0,
+    previousMonthPerformanceEstimate: 0,
     currentDiscountUsed: 1_000,
   });
 
@@ -113,13 +113,13 @@ test("calculateBenefitCapStatus marks cap unknown without previous structured pe
   assert.equal(status.remainingCap, null);
 });
 
-test("calculateBenefitCapStatus calculates automatic cap from previous structured performance", () => {
+test("calculateBenefitCapStatus calculates automatic cap from previous performance estimate", () => {
   const status = calculateBenefitCapStatus({
     monthlyCapTiers: [
       { performanceThreshold: 300_000, monthlyCapAmount: 15_000 },
       { performanceThreshold: 600_000, monthlyCapAmount: 30_000 },
     ],
-    previousMonthStructuredPerformance: 600_000,
+    previousMonthPerformanceEstimate: 600_000,
     currentDiscountUsed: 12_000,
   });
 
@@ -127,4 +127,20 @@ test("calculateBenefitCapStatus calculates automatic cap from previous structure
   assert.equal(status.autoMonthlyCapAmount, 30_000);
   assert.equal(status.remainingCap, 18_000);
   assert.equal(status.usageRate, 40);
+});
+
+test("calculateBenefitCapStatus includes legacy spending when estimating previous month performance", () => {
+  const status = calculateBenefitCapStatus({
+    monthlyCapTiers: [
+      { performanceThreshold: 300_000, monthlyCapAmount: 15_000 },
+      { performanceThreshold: 600_000, monthlyCapAmount: 30_000 },
+      { performanceThreshold: 1_000_000, monthlyCapAmount: 60_000 },
+    ],
+    previousMonthPerformanceEstimate: 377_581 + 626_327,
+    currentDiscountUsed: 30_000,
+  });
+
+  assert.equal(status.autoStatus, "ready");
+  assert.equal(status.autoMonthlyCapAmount, 60_000);
+  assert.equal(status.remainingCap, 30_000);
 });

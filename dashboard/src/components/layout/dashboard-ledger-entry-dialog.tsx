@@ -55,6 +55,7 @@ const entryConfirmLabels: Record<DashboardEntryType, string> = {
 const cardBenefitOptions = [
   { value: "none", label: "혜택 없음" },
   { value: "hana_mgs_simple_pay_10p", label: "하나 MG+S · 간편결제 10%" },
+  { value: "hana_mgs_subscription_50p", label: "하나 MG+S · 구독 50%" },
   { value: "shinhan_lady_lunch_5p", label: "신한 레이디 · 점심 5%" },
   { value: "shinhan_lady_medical_5p", label: "신한 레이디 · 병원/약국 5%" },
   { value: "shinhan_lady_shopping_3p", label: "신한 레이디 · 쇼핑 3%" },
@@ -75,6 +76,7 @@ export function DashboardLedgerEntryDialog() {
   const [open, setOpen] = useState(false);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [entryCreated, setEntryCreated] = useState(false);
   const [options, setOptions] = useState<EntryOptions | null>(null);
   const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -130,6 +132,16 @@ export function DashboardLedgerEntryDialog() {
     void loadEntryOptions();
   }
 
+  function resetEntryFormForNextEntry() {
+    setEntryCreated(false);
+    setMessage("");
+    setFieldErrors({});
+    setItem("");
+    setAmount("");
+    setMemo("");
+    setDiscountRuleId("none");
+  }
+
   const previewAmount = useMemo(() => {
     const value = Number(amount);
     return Number.isFinite(value) && value > 0 ? value.toLocaleString("ko-KR") : "0";
@@ -150,7 +162,7 @@ export function DashboardLedgerEntryDialog() {
     card_payment: hasCreditCardAccounts && hasAssetAccounts,
     balance_adjustment: hasBalanceAdjustmentAccounts && hasCapitalAccounts,
   };
-  const canSubmit = !submitting && !loadingOptions && canSubmitByType[entryType];
+  const canSubmit = !entryCreated && !submitting && !loadingOptions && canSubmitByType[entryType];
   const balanceTargetOptions = options?.balanceAdjustmentAccounts.filter((account) => account.accountType === targetAccountType) ?? [];
   const itemLabel = entryType === "income"
     ? "내용/출처"
@@ -214,6 +226,11 @@ export function DashboardLedgerEntryDialog() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // After a Whooing entry is created, the same transaction cannot be submitted twice from this form.
+    if (entryCreated) {
+      return;
+    }
+
     setMessage("");
     setFieldErrors({});
 
@@ -236,11 +253,12 @@ export function DashboardLedgerEntryDialog() {
         return;
       }
 
-      setMessage(result.message ?? "후잉 지출 등록이 완료되었습니다.");
-      setItem("");
-      setAmount("");
-      setMemo("");
-      setDiscountRuleId("none");
+      setEntryCreated(true);
+      setMessage(
+        result.syncStatus === "pending"
+          ? "후잉 원장 등록은 완료됐습니다. 다만 대시보드 반영은 지연될 수 있습니다. 같은 거래를 다시 등록하지 말고 화면 갱신 또는 동기화 요청 후 확인해 주세요."
+          : "후잉 원장에 등록했고 대시보드 동기화도 완료했습니다.",
+      );
       router.refresh();
     } catch {
       setMessage("후잉 지출 등록 요청에 실패했습니다.");
@@ -290,6 +308,7 @@ export function DashboardLedgerEntryDialog() {
                     setEntryType(type.value);
                     setFieldErrors({});
                     setMessage("");
+                    setEntryCreated(false);
                   }}
                 >
                   {type.label}
@@ -521,6 +540,11 @@ export function DashboardLedgerEntryDialog() {
                 <button type="button" className="ui-button ui-button-secondary ui-button-md" onClick={() => setOpen(false)}>
                   닫기
                 </button>
+                {entryCreated ? (
+                  <button type="button" className="ui-button ui-button-secondary ui-button-md" onClick={resetEntryFormForNextEntry}>
+                    새 거래 입력
+                  </button>
+                ) : null}
                 <button type="submit" className="ui-button ui-button-primary ui-button-md" disabled={!canSubmit}>
                   {submitting ? "등록 중" : entrySubmitLabels[entryType]}
                 </button>

@@ -83,7 +83,8 @@ export function evaluateCardBenefit(input: CardBenefitEvaluationInput): CardBene
     return noBenefitResult(input, "automatic_cap_unavailable", ruleMetadata);
   }
 
-  const capUsedBefore = input.monthlyContext.capUsedByRule[rule.ruleId] ?? 0;
+  const capUsageRuleId = rule.capUsageRuleId ?? rule.ruleId;
+  const capUsedBefore = input.monthlyContext.capUsedByRule[capUsageRuleId] ?? 0;
   const remainingCap = hasMonthlyCap ? Math.max(0, monthlyCapAmount - capUsedBefore) : Number.POSITIVE_INFINITY;
   if (remainingCap <= 0) {
     return noBenefitResult(input, "monthly_cap_exhausted", {

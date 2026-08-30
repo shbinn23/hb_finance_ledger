@@ -37,7 +37,7 @@ export interface BenefitCapTier {
 
 export interface BenefitCapStatusInput {
   monthlyCapTiers: BenefitCapTier[];
-  previousMonthStructuredPerformance: number;
+  previousMonthPerformanceEstimate: number;
   currentDiscountUsed: number;
 }
 
@@ -98,7 +98,7 @@ export function calculateBenefitCapStatus(input: BenefitCapStatusInput): Benefit
 
   const autoMonthlyCapAmount = resolveCapFromTiers(
     input.monthlyCapTiers,
-    input.previousMonthStructuredPerformance,
+    input.previousMonthPerformanceEstimate,
   );
   if (autoMonthlyCapAmount === null) {
     return {

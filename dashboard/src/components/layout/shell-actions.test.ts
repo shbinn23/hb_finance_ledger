@@ -44,6 +44,14 @@ test("dashboard expense entry dialog shows loading and empty option states", () 
   assert.match(dialogSource, /결제수단이 없습니다/);
 });
 
+test("dashboard ledger entry dialog treats pending sync as a successful created entry", () => {
+  assert.match(dialogSource, /entryCreated/);
+  assert.match(dialogSource, /same transaction cannot be submitted twice/i);
+  assert.match(dialogSource, /후잉 원장 등록은 완료됐습니다/);
+  assert.match(dialogSource, /같은 거래를 다시 등록하지 말고/);
+  assert.match(dialogSource, /새 거래 입력/);
+});
+
 test("Next dev allows the 127.0.0.1 origin used by local dashboard smoke checks", () => {
   assert.match(nextConfigSource, /allowedDevOrigins/);
   assert.match(nextConfigSource, /127\.0\.0\.1/);

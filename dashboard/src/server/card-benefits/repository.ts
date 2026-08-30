@@ -45,6 +45,7 @@ interface CardBenefitRuleDbRow {
   discount_type: DiscountType;
   discount_rate_bps: number;
   monthly_cap_tiers: unknown;
+  performance_policy: unknown;
   posting_policy: PostingPolicy;
 }
 
@@ -473,6 +474,9 @@ function monthlyCapTiersFromDb(value: unknown): CardBenefitRule["monthlyCapTiers
 }
 
 function toRule(row: CardBenefitRuleDbRow): CardBenefitRule {
+  const performancePolicy = typeof row.performance_policy === "string"
+    ? JSON.parse(row.performance_policy) as { capUsageRuleId?: unknown }
+    : row.performance_policy as { capUsageRuleId?: unknown } | null;
   return {
     ruleId: row.rule_id,
     cardAccountType: row.card_account_type,
@@ -485,6 +489,9 @@ function toRule(row: CardBenefitRuleDbRow): CardBenefitRule {
     discountType: row.discount_type,
     discountRateBps: row.discount_rate_bps,
     monthlyCapTiers: monthlyCapTiersFromDb(row.monthly_cap_tiers),
+    capUsageRuleId: typeof performancePolicy?.capUsageRuleId === "string"
+      ? performancePolicy.capUsageRuleId
+      : null,
     postingPolicy: row.posting_policy,
   };
 }
@@ -503,6 +510,7 @@ export async function getActiveCardBenefitRules(): Promise<CardBenefitRule[]> {
       discount_type,
       discount_rate_bps,
       monthly_cap_tiers,
+      performance_policy,
       posting_policy
     from app.card_benefit_rules
     where status = 'active'
@@ -516,12 +524,15 @@ export async function getCapUsedByRule(benefitMonth: string) {
   const { startDate, endDate } = entryDateRangeForBenefitMonth(benefitMonth);
   const result = await query<CapUsageDbRow>(
     `
-    select rule_id, coalesce(sum(applied_discount_amount), 0) as amount
-    from app.card_benefit_events
-    where entry_date >= $1
-      and entry_date < $2
-      and rule_id is not null
-    group by rule_id
+    select
+      coalesce(nullif(r.performance_policy ->> 'capUsageRuleId', ''), e.rule_id) as rule_id,
+      coalesce(sum(e.applied_discount_amount), 0) as amount
+    from app.card_benefit_events e
+    left join app.card_benefit_rules r on r.rule_id = e.rule_id
+    where e.entry_date >= $1
+      and e.entry_date < $2
+      and e.rule_id is not null
+    group by coalesce(nullif(r.performance_policy ->> 'capUsageRuleId', ''), e.rule_id)
     `,
     [startDate, endDate],
   );
@@ -529,7 +540,7 @@ export async function getCapUsedByRule(benefitMonth: string) {
   return Object.fromEntries(result.rows.map((row) => [row.rule_id, numberFromDb(row.amount)]));
 }
 
-async function getPreviousStructuredPerformanceAmount(benefitMonth: string, ruleId: string) {
+async function getPreviousPerformanceEstimateAmount(benefitMonth: string, ruleId: string) {
   const previousMonth = previousBenefitMonth(benefitMonth);
   const { startDate, endDate } = entryDateRangeForBenefitMonth(previousMonth);
   const result = await query<PerformanceAmountDbRow>(
@@ -538,15 +549,37 @@ async function getPreviousStructuredPerformanceAmount(benefitMonth: string, rule
       select card_account_type, card_account_id
       from app.card_benefit_rules
       where rule_id = $3
+    ),
+    structured as (
+      select coalesce(sum(e.performance_amount), 0) as amount
+      from app.card_benefit_events e
+      join selected_rule r
+        on r.card_account_type = e.card_account_type
+       and r.card_account_id = e.card_account_id
+      where e.entry_date >= $1
+        and e.entry_date < $2
+        and (e.section_id = $4 or e.section_id is null)
+    ),
+    legacy as (
+      select coalesce(sum(e.money), 0) as amount
+      from whooing.entries e
+      join selected_rule r
+        on r.card_account_type = e.r_account
+       and r.card_account_id = e.r_account_id
+      where e.section_id = $4
+        and e.entry_date >= $1
+        and e.entry_date < $2
+        and e.l_account = 'expenses'
+        and e.r_account = 'liabilities'
+        and not exists (
+          select 1
+          from app.card_benefit_events be
+          where be.whooing_entry_id = e.entry_id
+            and (be.section_id = $4 or be.section_id is null)
+        )
     )
-    select coalesce(sum(performance_amount), 0) as amount
-    from app.card_benefit_events e
-    join selected_rule r
-      on r.card_account_type = e.card_account_type
-     and r.card_account_id = e.card_account_id
-    where e.entry_date >= $1
-      and e.entry_date < $2
-      and (e.section_id = $4 or e.section_id is null)
+    select structured.amount + legacy.amount as amount
+    from structured cross join legacy
     `,
     [startDate, endDate, ruleId, sectionId],
   );
@@ -556,7 +589,7 @@ async function getPreviousStructuredPerformanceAmount(benefitMonth: string, rule
 
 export async function buildCardBenefitMonthlyContext(benefitMonth: string, ruleId: string) {
   const [performanceAmount, capUsedByRule] = await Promise.all([
-    getPreviousStructuredPerformanceAmount(benefitMonth, ruleId),
+    getPreviousPerformanceEstimateAmount(benefitMonth, ruleId),
     getCapUsedByRule(benefitMonth),
   ]);
 
@@ -712,14 +745,46 @@ export async function getCardBenefitMonthlyAssetsSummary(month?: string | null):
         group by rule_id
       ),
       previous_performance as (
+        with structured as (
+          select
+            card_account_type,
+            card_account_id,
+            coalesce(sum(performance_amount), 0) as amount
+          from app.card_benefit_events
+          where entry_date >= $3
+            and entry_date < $4
+            and (section_id = $5 or section_id is null)
+          group by card_account_type, card_account_id
+        ),
+        legacy as (
+          select
+            e.r_account as card_account_type,
+            e.r_account_id as card_account_id,
+            coalesce(sum(e.money), 0) as amount
+          from whooing.entries e
+          where e.section_id = $5
+            and e.entry_date >= $3
+            and e.entry_date < $4
+            and e.l_account = 'expenses'
+            and e.r_account = 'liabilities'
+            and not exists (
+              select 1
+              from app.card_benefit_events be
+              where be.whooing_entry_id = e.entry_id
+                and (be.section_id = $5 or be.section_id is null)
+            )
+          group by e.r_account, e.r_account_id
+        ),
+        merged as (
+          select card_account_type, card_account_id, amount from structured
+          union all
+          select card_account_type, card_account_id, amount from legacy
+        )
         select
           card_account_type,
           card_account_id,
-          coalesce(sum(performance_amount), 0) as previous_performance_amount
-        from app.card_benefit_events
-        where entry_date >= $3
-          and entry_date < $4
-          and (section_id = $5 or section_id is null)
+          coalesce(sum(amount), 0) as previous_performance_amount
+        from merged
         group by card_account_type, card_account_id
       )
       select
@@ -887,7 +952,7 @@ export async function getCardBenefitMonthlyAssetsSummary(month?: string | null):
       const totalUsed = eventDiscountAmount;
       const calculatedCap = calculateBenefitCapStatus({
         monthlyCapTiers: monthlyCapTiersFromDb(row.monthly_cap_tiers),
-        previousMonthStructuredPerformance: previousMonthPerformanceAmount,
+        previousMonthPerformanceEstimate: previousMonthPerformanceAmount,
         currentDiscountUsed: totalUsed,
       });
       return {

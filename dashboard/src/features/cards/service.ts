@@ -77,7 +77,7 @@ function buildRightInsightPanels(summary: CardsViewModel["summary"]): RightInsig
         },
         {
           type: "note",
-          text: "전월 구조화 실적이 있어야 다음 달 카드혜택 한도를 자동 산정할 수 있습니다.",
+          text: "전월 실적 추정이 한도 구간에 도달해야 다음 달 카드혜택 한도를 자동 산정할 수 있습니다.",
         },
       ],
     },

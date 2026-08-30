@@ -8,6 +8,7 @@ test("account display name uses account type and id as stable key", () => {
 
 test("account display name maps known asset accounts", () => {
   assert.equal(getAccountDisplayName("assets", "x35", "네이버CMA"), "네이버 CMA");
+  assert.equal(getAccountDisplayName("assets", "x97", "신한참신한파킹"), "신한 참신한파킹");
 });
 
 test("account display name maps known liability accounts", () => {

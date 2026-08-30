@@ -12,16 +12,16 @@ test("entryDateRangeForBenefitMonth returns inclusive start and exclusive end", 
   });
 });
 
-test("monthlyContextFromAutomaticPerformance uses previous structured performance only", () => {
+test("monthlyContextFromAutomaticPerformance uses previous performance estimate", () => {
   assert.deepEqual(
     monthlyContextFromAutomaticPerformance({
       benefitMonth: "2026-05",
-      performanceAmount: 600_000,
+      performanceAmount: 377_581 + 626_327,
       capUsedByRule: { hana_mgs_simple_pay_10p: 29_000 },
     }),
     {
       benefitMonth: "2026-05",
-      performanceAmount: 600_000,
+      performanceAmount: 1_003_908,
       capUsedByRule: { hana_mgs_simple_pay_10p: 29_000 },
     },
   );

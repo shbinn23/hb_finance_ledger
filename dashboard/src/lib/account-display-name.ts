@@ -3,6 +3,7 @@ const accountDisplayNames: Record<string, string> = {
   "assets:x35": "네이버 CMA",
   "assets:x36": "우리 CMA",
   "assets:x38": "아이오닉 하이브리드",
+  "assets:x97": "신한 참신한파킹",
   "liabilities:x22": "우리 SKT",
   "liabilities:x43": "우리 Olleh",
   "liabilities:x44": "현대 제로",
