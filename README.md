@@ -149,13 +149,18 @@ Gmail OAuth and network polling are intentionally not bundled yet. The runtime b
 identity from Gmail message and attachment IDs, checks the attachment SHA-256 against prior imports,
 then hands new attachment bytes to the import pipeline. Without explicit enablement and credentials,
 system status reports the watcher as disabled or needing credentials and performs no network request.
+The configured poll wrapper fails closed before calling its adapter unless both enablement and credential
+requirements are satisfied. It defaults to dry-run-only behavior.
 
 - `GMAIL_IMPORT_ENABLED`: must be `true` before a future runtime may poll.
+- `GMAIL_IMPORT_DRY_RUN_ONLY`: defaults to `true`; keep it enabled during initial operations.
+- `GMAIL_IMPORT_LABEL`: optional operator-facing watcher label.
 - `GMAIL_IMPORT_QUERY`: Gmail query selecting Pyeonhan Ledger export messages. The suggested default is
   `has:attachment filename:xlsx subject:(편한가계부 OR 가계부)`.
 - `GMAIL_IMPORT_POLL_INTERVAL_MS`: polling interval in milliseconds; values below 60000 fall back to 300000.
 - `GMAIL_CREDENTIALS_FILE` and `GMAIL_TOKEN_FILE`: preferred mounted OAuth credential/token paths.
-- `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`: optional client-value alternative; never commit real values.
+- `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, and `GMAIL_OAUTH_REFRESH_TOKEN`: optional
+  OAuth-value alternative; never commit real values.
 
 Before enabling polling, configure Google OAuth with the minimum `gmail.readonly` scope, durable
 processed-attachment identity storage, source-file hash lookup, attachment size limits, and retry policy.
@@ -166,6 +171,8 @@ Refund/cashback rows and 민생지원쿠폰 difference adjustments always remain
 an explicit choice between income, expense reversal, or card-benefit treatment. Support-coupon differences
 need an explicit balance-adjustment or support-income policy. Update and delete candidates are detected but
 never applied automatically.
+
+See `docs/import-operations-runbook.md` for the read-only readiness and reconciliation checklist.
 
 ### Import migration verification
 
