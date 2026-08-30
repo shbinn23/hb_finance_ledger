@@ -18,4 +18,8 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /window\.confirm/);
   assert.match(source, /migration 미적용 상태/);
   assert.match(source, /현재 Gmail 자동 감지는 설정 전입니다/);
+  assert.match(source, /매핑 상태/);
+  assert.match(source, /승인금액/);
+  assert.match(source, /할인액/);
+  assert.match(source, /카드혜택 후보/);
 });

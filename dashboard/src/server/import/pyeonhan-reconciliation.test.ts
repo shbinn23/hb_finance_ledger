@@ -74,6 +74,11 @@ test("reconciliation requires mapping when an account or category is missing", (
 
   assert.equal(result.rows[0].status, "mapping_required");
   assert.match(result.rows[0].reason, /자산 매핑/);
+  assert.deepEqual(result.mappingGaps, [{
+    mappingType: "asset",
+    sourceKey: "새 계좌",
+    count: 1,
+  }]);
 });
 
 test("reconciliation matches mirror duplicates one-to-one", () => {
@@ -174,5 +179,61 @@ test("reconciliation keeps discounts without an explicit rule and difference inc
 
   assert.equal(result.rows[0].status, "review_required");
   assert.match(result.rows[0].reason, /할인 rule/);
+  assert.equal(result.rows[0].cardBenefitCandidate, null);
   assert.equal(result.rows[1].status, "mapping_required");
+});
+
+test("reconciliation exposes an exact card rule candidate but keeps it review-only", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      sourceAssetName: "신한 레이디",
+      sourceCategoryName: "필수",
+      sourceSubcategoryName: "식비",
+      memo: "점심",
+      approvalAmount: 7700,
+      postingAmount: 7315,
+      discountAmount: 385,
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
+      { mappingType: "expense_category", sourceKey: "필수 / 식비", accountType: "expenses", accountId: "x61", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "review_required");
+  assert.equal(result.rows[0].cardBenefitCandidate?.ruleId, "shinhan_lady_lunch_5p");
+  assert.match(result.rows[0].reason, /신한 레이디 · 점심 5% 후보/);
+});
+
+test("discount review rows retain matching mirror evidence", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      approvalAmount: 10000,
+      postingAmount: 9000,
+      discountAmount: 1000,
+    })],
+    mappings,
+    mirrorEntries: [mirror({ amount: 9000 })],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "review_required");
+  assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
+});
+
+test("mapping status reports every missing mapping on a row", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({ sourceAssetName: "새 계좌", sourceSubcategoryName: "새 분류" })],
+    mappings,
+    mirrorEntries: [],
+    previousRows: [],
+  });
+
+  assert.deepEqual(result.mappingGaps, [
+    { mappingType: "asset", sourceKey: "새 계좌", count: 1 },
+    { mappingType: "expense_category", sourceKey: "선택 / 새 분류", count: 1 },
+  ]);
 });

@@ -1144,6 +1144,30 @@ a {
   color: var(--amber);
 }
 
+.import-mapping-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.import-mapping-list > div {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 0.65rem;
+}
+
+.import-mapping-list > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.import-mapping-list span {
+  color: var(--ink-secondary);
+  font-size: 0.78rem;
+}
+
 .import-summary-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

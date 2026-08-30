@@ -38,6 +38,7 @@ function row(overrides: Partial<AutoImportRow> = {}): AutoImportRow {
     status: "auto_creatable",
     reason: "new",
     matchedWhooingEntryId: null,
+    cardBenefitCandidate: null,
     mapping: {
       sourceAccount: { mappingType: "asset", sourceKey: "국민은행", accountType: "assets", accountId: "a1", confidence: 1 },
       counterpartyAccount: null,

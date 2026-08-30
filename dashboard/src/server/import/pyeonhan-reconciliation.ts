@@ -1,4 +1,8 @@
 import type { NormalizedPyeonhanTransaction } from "./pyeonhan-types.ts";
+import {
+  identifyPyeonhanCardBenefitCandidate,
+  type PyeonhanCardBenefitCandidate,
+} from "./pyeonhan-card-benefit.ts";
 
 export type ImportReconciliationStatus =
   | "auto_creatable"
@@ -51,11 +55,19 @@ export interface ReconciledImportRow {
   reason: string;
   matchedWhooingEntryId: number | null;
   mapping: ResolvedImportMapping;
+  cardBenefitCandidate: PyeonhanCardBenefitCandidate | null;
+}
+
+export interface ImportMappingGap {
+  mappingType: ImportMapping["mappingType"];
+  sourceKey: string;
+  count: number;
 }
 
 export interface PyeonhanReconciliationResult {
   rows: ReconciledImportRow[];
   possibleDeletes: ReconciledImportRow[];
+  mappingGaps: ImportMappingGap[];
   summary: {
     total: number;
     autoCreatable: number;
@@ -115,6 +127,26 @@ function mappingGap(
     return "카테고리 매핑이 필요합니다.";
   }
   return null;
+}
+
+function unresolvedMappings(
+  transaction: NormalizedPyeonhanTransaction,
+  mapping: ResolvedImportMapping,
+): Array<Omit<ImportMappingGap, "count">> {
+  const gaps: Array<Omit<ImportMappingGap, "count">> = [];
+  if (!mapping.sourceAccount) gaps.push({ mappingType: "asset", sourceKey: transaction.sourceAssetName });
+  if (transaction.entryType === "transfer" && !mapping.counterpartyAccount) {
+    if (transaction.counterpartyAssetName) {
+      gaps.push({ mappingType: "asset", sourceKey: transaction.counterpartyAssetName });
+    }
+  }
+  if (transaction.entryType === "expense" && !mapping.categoryAccount) {
+    gaps.push({ mappingType: "expense_category", sourceKey: categoryKey(transaction) });
+  }
+  if (transaction.entryType === "income" && !mapping.categoryAccount) {
+    gaps.push({ mappingType: "income_category", sourceKey: categoryKey(transaction) });
+  }
+  return gaps;
 }
 
 function expectedSides(row: ReconciledImportRow) {
@@ -199,6 +231,7 @@ function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
     reason: "이전 import에는 있었지만 현재 export 범위에서 찾지 못했습니다.",
     matchedWhooingEntryId: previous.matchedWhooingEntryId,
     mapping: emptyMapping(),
+    cardBenefitCandidate: null,
   };
 }
 
@@ -231,22 +264,20 @@ export function reconcilePyeonhanTransactions({
   const claimedPreviousIdentities = new Set<string>();
   const rows = transactions.map((transaction): ReconciledImportRow => {
     const mapping = resolveMapping(transaction, mappings);
+    const cardBenefitCandidate = identifyPyeonhanCardBenefitCandidate(transaction);
     const base: ReconciledImportRow = {
       transaction,
       status: "review_required",
       reason: "검토가 필요합니다.",
       matchedWhooingEntryId: null,
       mapping,
+      cardBenefitCandidate,
     };
     const gap = mappingGap(transaction, mapping);
     if (gap) return { ...base, status: "mapping_required", reason: gap };
     if (transaction.entryType === "transfer" && !transaction.transferPairComplete) {
       return { ...base, reason: "이체 입금/출금 pair를 모두 찾지 못했습니다." };
     }
-    if (transaction.discountAmount > 0) {
-      return { ...base, reason: "할인 rule을 확정할 수 없어 자동 등록하지 않습니다." };
-    }
-
     const previous = previousByIdentity.get(transaction.sourceIdentityKey);
     const exactMirror = mirrorEntries.find((entry) => (
       !usedMirrorIds.has(entry.entryId) && sameLedgerShape(base, entry, true)
@@ -292,6 +323,17 @@ export function reconcilePyeonhanTransactions({
       };
     }
 
+    if (transaction.discountAmount > 0) {
+      if (similarMirror) usedMirrorIds.add(similarMirror.entryId);
+      return {
+        ...base,
+        reason: cardBenefitCandidate
+          ? `카드혜택 ${cardBenefitCandidate.label} 후보입니다. 자동 등록 전 확인이 필요합니다.`
+          : "할인 rule을 확정할 수 없어 자동 등록하지 않습니다.",
+        matchedWhooingEntryId: similarMirror?.entryId ?? null,
+      };
+    }
+
     if (exactMirror) {
       usedMirrorIds.add(exactMirror.entryId);
       return {
@@ -319,11 +361,24 @@ export function reconcilePyeonhanTransactions({
       && !claimedPreviousIdentities.has(previous.sourceIdentityKey)
     ))
     .map(deleteCandidate);
+  const mappingGapCounts = new Map<string, ImportMappingGap>();
+  rows.forEach((row) => {
+    if (row.status !== "mapping_required") return;
+    unresolvedMappings(row.transaction, row.mapping).forEach((gap) => {
+      if (!gap.sourceKey) return;
+      const key = `${gap.mappingType}:${normalize(gap.sourceKey)}`;
+      const current = mappingGapCounts.get(key);
+      mappingGapCounts.set(key, { ...gap, count: (current?.count ?? 0) + 1 });
+    });
+  });
   const count = (status: ImportReconciliationStatus) => rows.filter((row) => row.status === status).length;
 
   return {
     rows,
     possibleDeletes,
+    mappingGaps: [...mappingGapCounts.values()].sort((a, b) => (
+      a.mappingType.localeCompare(b.mappingType) || a.sourceKey.localeCompare(b.sourceKey, "ko-KR")
+    )),
     summary: {
       total: rows.length,
       autoCreatable: count("auto_creatable"),

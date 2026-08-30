@@ -28,10 +28,12 @@ interface DryRunRow {
     memo: string;
     postingAmount: number;
     approvalAmount: number;
+    discountAmount: number;
   };
   status: ImportStatus;
   reason: string;
   matchedWhooingEntryId: number | null;
+  cardBenefitCandidate: { ruleId: string; label: string; reason: string } | null;
 }
 
 interface DryRunResult {
@@ -42,6 +44,11 @@ interface DryRunResult {
   schema: { autoApplySupported: boolean };
   rows: DryRunRow[];
   possibleDeletes: DryRunRow[];
+  mappingGaps: Array<{
+    mappingType: "asset" | "expense_category" | "income_category";
+    sourceKey: string;
+    count: number;
+  }>;
   summary: {
     total: number;
     autoCreatable: number;
@@ -174,6 +181,26 @@ export function ImportsPage() {
             </div>
           ) : null}
 
+          {result.mappingGaps.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardDescription>매핑 상태</CardDescription>
+                <CardTitle>확인이 필요한 원본 값</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="import-mapping-list">
+                  {result.mappingGaps.map((gap) => (
+                    <div key={`${gap.mappingType}-${gap.sourceKey}`}>
+                      <Badge tone="watch">{gap.mappingType}</Badge>
+                      <strong>{gap.sourceKey}</strong>
+                      <span>{gap.count}건</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
           <Card className="transaction-panel">
             <CardHeader>
               <CardDescription>{result.startDate}~{result.endDate}</CardDescription>
@@ -195,7 +222,8 @@ export function ImportsPage() {
                   <thead>
                     <tr>
                       <th>원본 행</th><th>날짜</th><th>유형</th><th>자산</th><th>내용</th>
-                      <th className="amount">매입금액</th><th>상태</th><th>비교 근거</th>
+                      <th className="amount">승인금액</th><th className="amount">매입금액</th>
+                      <th className="amount">할인액</th><th>카드혜택 후보</th><th>상태</th><th>비교 근거</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -208,7 +236,10 @@ export function ImportsPage() {
                           <td>{row.transaction.entryType}</td>
                           <td>{row.transaction.sourceAssetName || "-"}</td>
                           <td><strong>{row.transaction.item || "-"}</strong><small>{row.transaction.memo}</small></td>
+                          <td className="amount">{won(row.transaction.approvalAmount)}</td>
                           <td className="amount">{won(row.transaction.postingAmount)}</td>
+                          <td className="amount">{won(row.transaction.discountAmount)}</td>
+                          <td>{row.cardBenefitCandidate?.label ?? "-"}</td>
                           <td><Badge tone={status.tone}>{status.label}</Badge></td>
                           <td>{row.reason}{row.matchedWhooingEntryId ? ` · #${row.matchedWhooingEntryId}` : ""}</td>
                         </tr>
