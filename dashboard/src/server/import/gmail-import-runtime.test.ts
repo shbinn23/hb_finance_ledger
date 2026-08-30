@@ -42,7 +42,15 @@ test("Gmail import poll creates review batches and summarizes duplicates", async
     }),
     wasProcessed: async () => false,
     wasSourceFileProcessed: async () => false,
-    importAttachment: async () => ({ batchId: 17 }),
+    importAttachment: async () => ({
+      batchId: 17,
+      batchStatus: "review",
+      createdRows: 4,
+      reviewRequiredCount: 1,
+      possibleUpdateCount: 1,
+      mappingRequiredCount: 1,
+      autoCreatableCount: 1,
+    }),
   });
 
   assert.deepEqual(result, {
@@ -52,6 +60,23 @@ test("Gmail import poll creates review batches and summarizes duplicates", async
     importedBatches: 1,
     reusedBatches: 0,
     batchIds: [17],
+    skippedInvalidAttachments: 0,
+    createdRows: 4,
+    reviewRequiredCount: 1,
+    possibleUpdateCount: 1,
+    mappingRequiredCount: 1,
+    autoCreatableCount: 1,
+    latestBatchId: 17,
+    latestBatchStatus: "review",
+    latestBatch: {
+      batchId: 17,
+      batchStatus: "review",
+      createdRows: 4,
+      reviewRequiredCount: 1,
+      possibleUpdateCount: 1,
+      mappingRequiredCount: 1,
+      autoCreatableCount: 1,
+    },
     errors: [],
   });
 });
@@ -68,10 +93,21 @@ test("Gmail import poll counts the same attachment as reused", async () => {
     wasProcessed: async () => true,
     wasSourceFileProcessed: async () => false,
     importAttachment: async () => ({ batchId: 1 }),
+    loadProcessedAttachment: async () => ({
+      batchId: 17,
+      batchStatus: "review",
+      reused: true,
+      rows: [{ status: "possible_update" }],
+    }),
+    getLatestBatch: async () => ({ batchId: 17, batchStatus: "review" }),
   });
 
   assert.equal(result.importedBatches, 0);
   assert.equal(result.reusedBatches, 1);
+  assert.equal(result.skippedInvalidAttachments, 0);
+  assert.equal(result.latestBatchId, 17);
+  assert.equal(result.latestBatchStatus, "review");
+  assert.deepEqual(result.latestBatch?.rows, [{ status: "possible_update" }]);
 });
 
 test("Gmail import poll reports a safe attachment error without failing the whole poll", async () => {
@@ -90,4 +126,5 @@ test("Gmail import poll reports a safe attachment error without failing the whol
 
   assert.equal(result.status, "polled");
   assert.deepEqual(result.errors, ["attachment_import_failed"]);
+  assert.equal(result.skippedInvalidAttachments, 1);
 });

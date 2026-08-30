@@ -188,12 +188,21 @@ export async function getPreviousImportRowsForRange(
     occurred_date: string;
     entry_type: string;
     source_asset_name: string;
+    counterparty_asset_name: string | null;
+    source_category_name: string | null;
+    source_subcategory_name: string | null;
+    item: string;
+    memo: string;
+    posting_amount: string;
+    approval_amount: string;
   }>(
     `
     select distinct on (source_identity_key)
       source_identity_key, source_content_hash, status,
       matched_whooing_entry_id, created_whooing_entry_id,
-      occurred_date::text, entry_type, source_asset_name
+      occurred_date::text, entry_type, source_asset_name, counterparty_asset_name,
+      source_category_name, source_subcategory_name, item, memo,
+      posting_amount::text, approval_amount::text
     from app.import_rows
     where occurred_date between $1::date and $2::date
       and status in ('created', 'duplicate')
@@ -209,7 +218,48 @@ export async function getPreviousImportRowsForRange(
     occurredDate: row.occurred_date,
     entryType: row.entry_type,
     sourceAssetName: row.source_asset_name,
+    counterpartyAssetName: row.counterparty_asset_name,
+    sourceCategoryName: row.source_category_name,
+    sourceSubcategoryName: row.source_subcategory_name,
+    item: row.item,
+    memo: row.memo,
+    postingAmount: Number(row.posting_amount),
+    approvalAmount: Number(row.approval_amount),
   }));
+}
+
+export async function saveImportMapping(input: {
+  mappingType: ImportMapping["mappingType"];
+  sourceKey: string;
+  accountType: string;
+  accountId: string;
+}) {
+  const accounts = await getLedgerEntryAccounts();
+  const available = input.mappingType === "asset"
+    ? accounts.paymentAccounts
+    : input.mappingType === "expense_category"
+      ? accounts.expenseCategories
+      : accounts.incomeCategories;
+  const target = available.find((account) => (
+    account.accountId === input.accountId && account.accountType === input.accountType
+  ));
+  if (!target) throw new Error("invalid_mapping_target");
+  await query(
+    `
+    insert into app.import_mappings (
+      source, mapping_type, source_key, whooing_account_id, whooing_account_type,
+      confidence, is_active, updated_at
+    ) values ('pyeonhan_excel', $1, $2, $3, $4, 1, true, now())
+    on conflict (source, mapping_type, source_key) do update set
+      whooing_account_id = excluded.whooing_account_id,
+      whooing_account_type = excluded.whooing_account_type,
+      confidence = 1,
+      is_active = true,
+      updated_at = now()
+    `,
+    [input.mappingType, input.sourceKey, input.accountId, input.accountType],
+  );
+  return { ...input, accountName: target.title };
 }
 
 export async function getLatestImportBatchForSourceFile(sourceFileHash: string) {
@@ -226,6 +276,20 @@ export async function getLatestImportBatchForSourceFile(sourceFileHash: string) 
   );
   const row = result.rows[0];
   return row ? { batchId: Number(row.id), status: row.status } : null;
+}
+
+export async function getLatestImportBatchStatus() {
+  if (!(await getImportSchemaStatus()).importTablesAvailable) return null;
+  const result = await query<{ id: string; status: PersistedImportBatchStatus }>(
+    `
+    select id::text, status
+    from app.import_batches
+    order by created_at desc, id desc
+    limit 1
+    `,
+  );
+  const row = result.rows[0];
+  return row ? { batchId: Number(row.id), batchStatus: row.status } : null;
 }
 
 export async function getImportBatchForGmailAttachment(messageId: string, attachmentId: string) {
@@ -456,6 +520,27 @@ export async function getLatestReviewRowReferences(sourceFileHash: string) {
       Number(row.id),
     ])),
   };
+}
+
+export async function getImportRowReferencesForBatch(batchId: number) {
+  if (!(await getImportSchemaStatus()).importTablesAvailable) return new Map<string, number>();
+  const result = await query<{
+    id: string;
+    source_identity_key: string;
+    occurrence_index: number;
+  }>(
+    `
+    select id::text, source_identity_key, occurrence_index
+    from app.import_rows
+    where batch_id = $1
+    order by id
+    `,
+    [batchId],
+  );
+  return new Map(result.rows.map((row) => [
+    importRowReferenceKey(row.source_identity_key, row.occurrence_index),
+    Number(row.id),
+  ]));
 }
 
 export async function getBenefitApprovalCandidate(importRowId: number): Promise<BenefitApprovalCandidate | null> {

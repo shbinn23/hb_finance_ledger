@@ -1151,11 +1151,18 @@ a {
 
 .import-mapping-list > div {
   display: grid;
-  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(7rem, auto) minmax(9rem, 1fr) auto minmax(12rem, auto);
   align-items: center;
   gap: 0.75rem;
   border-bottom: 1px solid var(--hairline);
   padding-bottom: 0.65rem;
+}
+
+.import-mapping-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
 }
 
 .import-mapping-list > div:last-child {
@@ -1187,8 +1194,24 @@ a {
   font-weight: 300;
 }
 
+.import-integrity-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  color: var(--ink-secondary);
+  font-size: 0.78rem;
+}
+
+.import-integrity-strip strong {
+  margin-left: 0.25rem;
+  color: var(--ink);
+}
+
 .import-table {
-  min-width: 72rem;
+  min-width: 92rem;
 }
 
 .import-benefit-table {
@@ -2097,6 +2120,15 @@ a {
   .import-upload-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .import-mapping-list > div {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .import-mapping-actions {
+    justify-content: flex-start;
   }
 
   .section-heading {

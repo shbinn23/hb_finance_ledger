@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       ...result,
-      message: `메일 ${result.checkedMessages}건에서 Excel ${result.foundAttachments}개를 확인했습니다. 신규 검토 batch ${result.importedBatches}개, 재사용 ${result.reusedBatches}개입니다.`,
+      message: `메일 ${result.checkedMessages}건에서 Excel ${result.foundAttachments}개를 확인했습니다. 신규 batch ${result.importedBatches}개, 재사용 ${result.reusedBatches}개, 무효 첨부 ${result.skippedInvalidAttachments}개입니다. 신규 row ${result.createdRows}건 중 수정 ${result.possibleUpdateCount}건, 매핑 ${result.mappingRequiredCount}건, 자동등록 후보 ${result.autoCreatableCount}건입니다.`,
     });
   } catch (error) {
     const knownErrors = new Set([

@@ -74,11 +74,9 @@ test("reconciliation requires mapping when an account or category is missing", (
 
   assert.equal(result.rows[0].status, "mapping_required");
   assert.match(result.rows[0].reason, /자산 매핑/);
-  assert.deepEqual(result.mappingGaps, [{
-    mappingType: "asset",
-    sourceKey: "새 계좌",
-    count: 1,
-  }]);
+  assert.equal(result.mappingGaps[0].mappingType, "asset");
+  assert.equal(result.mappingGaps[0].sourceKey, "새 계좌");
+  assert.equal(result.mappingGaps[0].count, 1);
 });
 
 test("reconciliation matches mirror duplicates one-to-one", () => {
@@ -93,6 +91,34 @@ test("reconciliation matches mirror duplicates one-to-one", () => {
   });
 
   assert.deepEqual(result.rows.map((row) => row.status), ["duplicate", "auto_creatable"]);
+  assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
+});
+
+test("reconciliation detects an existing reciprocal transfer as duplicate", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      sourceRowIndexes: [2, 3],
+      entryType: "transfer",
+      counterpartyAssetName: "우체국",
+      sourceCategoryName: null,
+      sourceSubcategoryName: null,
+      item: "계좌이체",
+      postingAmount: 5000,
+      approvalAmount: 5000,
+    })],
+    mappings,
+    mirrorEntries: [mirror({
+      leftAccountType: "assets",
+      leftAccountId: "a2",
+      rightAccountType: "assets",
+      rightAccountId: "a1",
+      item: "계좌이체",
+      amount: 5000,
+    })],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "duplicate");
   assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
 });
 
@@ -130,6 +156,95 @@ test("reconciliation treats a one-to-one amount identity change as a possible up
   assert.equal(result.rows[0].status, "possible_update");
   assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
   assert.equal(result.possibleDeletes.length, 0);
+});
+
+test("reconciliation exposes before and after fields for a conservative one-to-one revision", () => {
+  const previousRows: PreviousImportRow[] = [{
+    sourceIdentityKey: "old-identity",
+    sourceContentHash: "old-content",
+    status: "created",
+    matchedWhooingEntryId: 1428000,
+    occurredDate: "2026-08-29",
+    entryType: "expense",
+    sourceAssetName: "국민은행",
+    counterpartyAssetName: null,
+    sourceCategoryName: "선택",
+    sourceSubcategoryName: "식비",
+    item: "점심",
+    memo: "이전 메모",
+    postingAmount: 9000,
+    approvalAmount: 9000,
+  }];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      occurredDate: "2026-08-30",
+      memo: "수정 메모",
+      postingAmount: 10000,
+      approvalAmount: 10000,
+    })],
+    mappings,
+    mirrorEntries: [mirror({ occurredDate: "2026-08-29" })],
+    previousRows,
+  });
+
+  assert.equal(result.rows[0].status, "possible_update");
+  assert.deepEqual(result.rows[0].changes.map((change) => change.field), [
+    "occurredDate", "memo", "postingAmount", "approvalAmount",
+  ]);
+  assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
+  assert.equal(result.possibleDeletes.length, 0);
+});
+
+test("reconciliation flags a conflict when multiple previous rows are plausible", () => {
+  const previousRows: PreviousImportRow[] = [1, 2].map((index) => ({
+    sourceIdentityKey: `old-identity-${index}`,
+    sourceContentHash: `old-content-${index}`,
+    status: "created",
+    matchedWhooingEntryId: 1428000 + index,
+    occurredDate: "2026-08-29",
+    entryType: "expense",
+    sourceAssetName: "국민은행",
+    item: "점심",
+    postingAmount: 9000,
+    approvalAmount: 9000,
+  }));
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({ occurredDate: "2026-08-30" })],
+    mappings,
+    mirrorEntries: [],
+    previousRows,
+  });
+
+  assert.equal(result.rows[0].status, "conflict");
+  assert.equal(result.possibleDeletes.length, 2);
+});
+
+test("reconciliation keeps competing modified and new expenses out of auto-create", () => {
+  const previousRows: PreviousImportRow[] = [{
+    sourceIdentityKey: "old-identity",
+    sourceContentHash: "old-content",
+    status: "created",
+    matchedWhooingEntryId: 1428000,
+    occurredDate: "2026-08-30",
+    entryType: "expense",
+    sourceAssetName: "국민은행",
+    item: "점심",
+    postingAmount: 9000,
+    approvalAmount: 9000,
+  }];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [
+      transaction({ item: "수정된 점심", sourceIdentityKey: "changed-identity" }),
+      transaction({ item: "신규 간식", sourceIdentityKey: "new-identity", occurrenceIndex: 2 }),
+    ],
+    mappings,
+    mirrorEntries: [],
+    previousRows,
+  });
+
+  assert.deepEqual(result.rows.map((row) => row.status), ["conflict", "conflict"]);
+  assert.equal(result.summary.autoCreatable, 0);
+  assert.equal(result.possibleDeletes.length, 1);
 });
 
 test("reconciliation keeps an unchanged previously created row duplicate when the mirror is stale", () => {
@@ -374,8 +489,24 @@ test("mapping status reports every missing mapping on a row", () => {
     previousRows: [],
   });
 
-  assert.deepEqual(result.mappingGaps, [
-    { mappingType: "asset", sourceKey: "새 계좌", count: 1 },
-    { mappingType: "expense_category", sourceKey: "선택 / 새 분류", count: 1 },
+  assert.equal(result.mappingGaps.length, 2);
+  assert.deepEqual(result.mappingGaps.map(({ mappingType, sourceKey, count, amountTotal }) => ({
+    mappingType, sourceKey, count, amountTotal,
+  })), [
+    { mappingType: "asset", sourceKey: "새 계좌", count: 1, amountTotal: 9000 },
+    { mappingType: "expense_category", sourceKey: "선택 / 새 분류", count: 1, amountTotal: 9000 },
   ]);
+});
+
+test("mapping gaps include conservative suggestions without applying them", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({ sourceAssetName: "국민 은행" })],
+    mappings,
+    mirrorEntries: [],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "mapping_required");
+  assert.equal(result.mappingGaps[0].suggestions[0].accountId, "a1");
+  assert.equal(result.mappingGaps[0].suggestions[0].sourceKey, "국민은행");
 });

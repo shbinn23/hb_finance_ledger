@@ -78,15 +78,25 @@ export async function processGmailAttachment<T>(
     wasProcessed: (identity: string) => Promise<boolean>;
     wasSourceFileProcessed: (sourceFileHash: string) => Promise<boolean>;
     importAttachment: (attachment: GmailAttachmentEnvelope) => Promise<T>;
+    loadProcessedAttachment?: (attachment: GmailAttachmentEnvelope) => Promise<T | null>;
   },
 ) {
   const identity = gmailAttachmentIdentity(attachment);
   if (await dependencies.wasProcessed(identity)) {
-    return { status: "duplicate" as const, identity, result: null };
+    return {
+      status: "duplicate" as const,
+      identity,
+      result: await dependencies.loadProcessedAttachment?.(attachment) ?? null,
+    };
   }
   const sourceFileHash = pyeonhanSourceFileHash(attachment.bytes);
   if (await dependencies.wasSourceFileProcessed(sourceFileHash)) {
-    return { status: "duplicate_file" as const, identity, sourceFileHash, result: null };
+    return {
+      status: "duplicate_file" as const,
+      identity,
+      sourceFileHash,
+      result: await dependencies.loadProcessedAttachment?.(attachment) ?? null,
+    };
   }
   return {
     status: "handed_off" as const,

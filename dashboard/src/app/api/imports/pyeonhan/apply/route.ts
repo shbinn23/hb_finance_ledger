@@ -16,10 +16,18 @@ import {
   buildPyeonhanDryRun,
   validatePyeonhanUpload,
 } from "@/server/import/pyeonhan-dry-run";
+import { importWritesAreDryRunOnly } from "@/server/import/import-actions";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
+  if (importWritesAreDryRunOnly()) {
+    return NextResponse.json({
+      ok: false,
+      error: "import_dry_run_only",
+      message: "dry-run-only에서는 Whooing 원장 자동 등록이 차단됩니다.",
+    }, { status: 409 });
+  }
   try {
     const formData = await request.formData();
     const candidate = formData.get("file");

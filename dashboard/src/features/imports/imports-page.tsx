@@ -8,6 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 type ImportStatus = "auto_creatable" | "duplicate" | "mapping_required" | "possible_update"
   | "possible_delete" | "conflict" | "review_required";
+type ImportViewFilter = "all" | "new" | "update" | "transfer" | "mapping"
+  | "benefit" | "review" | "duplicate";
 type BenefitStatus = "not_applicable" | "rule_matched" | "rule_uncertain" | "event_exists"
   | "needs_review" | "approved" | "skipped" | "created" | "failed";
 
@@ -30,6 +32,18 @@ interface DryRunRow {
   status: ImportStatus;
   reason: string;
   matchedWhooingEntryId: number | null;
+  changes: Array<{
+    field: string;
+    label: string;
+    before: string | number | null;
+    after: string | number | null;
+  }>;
+  mirrorChanges: Array<{
+    field: string;
+    label: string;
+    before: string | number | null;
+    after: string | number | null;
+  }>;
   cardBenefitStatus: BenefitStatus;
   benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
   cardBenefitCandidate: {
@@ -59,6 +73,14 @@ interface DryRunResult {
     mappingType: "asset" | "expense_category" | "income_category";
     sourceKey: string;
     count: number;
+    amountTotal: number;
+    entryTypes: string[];
+    suggestions: Array<{
+      mappingType: "asset" | "expense_category" | "income_category";
+      sourceKey: string;
+      accountType: string;
+      accountId: string;
+    }>;
   }>;
   summary: {
     total: number;
@@ -121,14 +143,31 @@ function won(value: number) {
   return `${new Intl.NumberFormat("ko-KR").format(value)}원`;
 }
 
+function changeValue(value: string | number | null) {
+  if (value === null || value === "") return "없음";
+  return typeof value === "number" ? won(value) : value;
+}
+
+function rowMatchesFilter(row: DryRunRow, filter: ImportViewFilter) {
+  if (filter === "all") return true;
+  if (filter === "new") return row.status === "auto_creatable";
+  if (filter === "update") return row.status === "possible_update" || row.status === "possible_delete";
+  if (filter === "transfer") return row.transaction.entryType === "transfer";
+  if (filter === "mapping") return row.status === "mapping_required";
+  if (filter === "benefit") return row.cardBenefitStatus !== "not_applicable";
+  if (filter === "duplicate") return row.status === "duplicate";
+  return row.status === "review_required" || row.status === "conflict";
+}
+
 export function ImportsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<DryRunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyBenefitRowId, setBusyBenefitRowId] = useState<number | null>(null);
   const [gmailBusy, setGmailBusy] = useState(false);
+  const [busyMappingKey, setBusyMappingKey] = useState("");
   const [message, setMessage] = useState("");
-  const [statusFilter, setStatusFilter] = useState<ImportStatus | "all">("all");
+  const [viewFilter, setViewFilter] = useState<ImportViewFilter>("all");
   const [runtimeStatus, setRuntimeStatus] = useState<ImportRuntimeStatus | null>(null);
 
   function refreshRuntimeStatus() {
@@ -147,9 +186,12 @@ export function ImportsPage() {
     setMessage("");
     try {
       const response = await fetch("/api/imports/gmail/poll", { method: "POST" });
-      const payload = await response.json() as { message?: string };
+      const payload = await response.json() as { message?: string; latestBatch?: DryRunResult | null };
       setMessage(payload.message ?? "Gmail dry-run 확인을 마쳤습니다.");
-      if (response.ok) await refreshRuntimeStatus();
+      if (response.ok) {
+        if (payload.latestBatch) setResult(payload.latestBatch);
+        await refreshRuntimeStatus();
+      }
     } catch {
       setMessage("Gmail read-only 확인 중 오류가 발생했습니다.");
     } finally {
@@ -219,8 +261,38 @@ export function ImportsPage() {
     }
   }
 
+  async function saveMapping(
+    gap: DryRunResult["mappingGaps"][number],
+    suggestion: DryRunResult["mappingGaps"][number]["suggestions"][number],
+  ) {
+    if (!window.confirm(
+      `'${gap.sourceKey}' ${gap.count}건을 ${suggestion.accountType}:${suggestion.accountId}에 매핑합니다. 저장 후 같은 Excel을 다시 dry-run해야 합니다. 진행할까요?`,
+    )) return;
+    const key = `${gap.mappingType}:${gap.sourceKey}`;
+    setBusyMappingKey(key);
+    try {
+      const response = await fetch("/api/imports/account-mappings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mappingType: gap.mappingType,
+          sourceKey: gap.sourceKey,
+          accountType: suggestion.accountType,
+          accountId: suggestion.accountId,
+          confirmed: true,
+        }),
+      });
+      const payload = await response.json() as { message?: string };
+      setMessage(payload.message ?? (response.ok ? "매핑을 저장했습니다." : "매핑 저장에 실패했습니다."));
+    } catch {
+      setMessage("매핑 저장 중 오류가 발생했습니다.");
+    } finally {
+      setBusyMappingKey("");
+    }
+  }
+
   const rows = result ? [...result.rows, ...result.possibleDeletes] : [];
-  const filteredRows = statusFilter === "all" ? rows : rows.filter((row) => row.status === statusFilter);
+  const filteredRows = rows.filter((row) => rowMatchesFilter(row, viewFilter));
   const benefitRows = result?.rows.filter((row) => row.transaction.discountAmount > 0) ?? [];
   const benefitRuleSummary = [...benefitRows.reduce((summary, row) => {
     const candidate = row.cardBenefitCandidate;
@@ -252,6 +324,11 @@ export function ImportsPage() {
   }>()).values()];
   const gmailState = runtimeStatus?.gmailImport.state ?? "disabled";
   const gmailLabel = gmailState === "ready" ? "연결 준비 완료" : gmailState === "needs_credentials" ? "credential 필요" : "비활성";
+  const transferCount = result?.rows.filter((row) => row.transaction.entryType === "transfer").length ?? 0;
+  const refundReviewCount = result?.rows.filter((row) => /환급|캐시백/.test(row.reason)).length ?? 0;
+  const newCandidateCount = result?.rows.filter((row) => ![
+    "duplicate", "possible_update", "conflict",
+  ].includes(row.status)).length ?? 0;
 
   return (
     <>
@@ -309,20 +386,27 @@ export function ImportsPage() {
         <>
           <div className="import-summary-grid">
             {[
-              ["정규화 거래", result.summary.total],
+              ["신규 거래 후보", newCandidateCount],
+              ["수정 후보", result.summary.possibleUpdates],
+              ["새 자산·매핑", result.summary.mappingRequired],
+              ["이체 후보", transferCount],
+              ["카드혜택 후보", result.summary.benefitCandidates],
+              ["환급·캐시백 검토", refundReviewCount],
               ["자동등록 가능", result.summary.autoCreatable],
-              ["중복", result.summary.duplicates],
-              ["검토·매핑", result.summary.reviewRequired + result.summary.mappingRequired],
-              ["수정·삭제·충돌", result.summary.possibleUpdates + result.summary.possibleDeletes + result.summary.conflicts],
-              ["혜택 승인 후보", result.summary.benefitCandidates],
-              ["기존 event", result.summary.benefitExisting],
-              ["event 누락", result.summary.benefitEventMissing],
-              ["금액 불일치", result.summary.benefitAmountMismatches],
+              ["dry-run-only", (runtimeStatus?.gmailImport.dryRunOnly ?? true) ? "ON" : "OFF"],
             ].map(([label, value]) => (
               <Card key={String(label)} className="import-summary-card">
                 <CardDescription>{label}</CardDescription><strong>{value}</strong>
               </Card>
             ))}
+          </div>
+          <div className="import-integrity-strip" aria-label="import 검산 상태">
+            <span>중복 <strong>{result.summary.duplicates}</strong></span>
+            <span>삭제 후보 <strong>{result.summary.possibleDeletes}</strong></span>
+            <span>충돌 <strong>{result.summary.conflicts}</strong></span>
+            <span>기존 event <strong>{result.summary.benefitExisting}</strong></span>
+            <span>event 누락 <strong>{result.summary.benefitEventMissing}</strong></span>
+            <span>금액 불일치 <strong>{result.summary.benefitAmountMismatches}</strong></span>
           </div>
 
           {!result.schema.autoApplySupported || !result.schema.benefitReviewSupported ? (
@@ -416,11 +500,26 @@ export function ImportsPage() {
 
           {result.mappingGaps.length > 0 ? (
             <Card>
-              <CardHeader><CardDescription>매핑 상태</CardDescription><CardTitle>확인이 필요한 원본 값</CardTitle></CardHeader>
+              <CardHeader><CardDescription>새 자산·분류 후보</CardDescription><CardTitle>확인이 필요한 원본 값</CardTitle></CardHeader>
               <CardContent><div className="import-mapping-list">
                 {result.mappingGaps.map((gap) => (
                   <div key={`${gap.mappingType}-${gap.sourceKey}`}>
-                    <Badge tone="watch">{gap.mappingType}</Badge><strong>{gap.sourceKey}</strong><span>{gap.count}건</span>
+                    <Badge tone="watch">{gap.mappingType}</Badge>
+                    <strong>{gap.sourceKey}</strong>
+                    <span>{gap.count}건 · {won(gap.amountTotal)} · {gap.entryTypes.join(", ")}</span>
+                    <div className="import-mapping-actions">
+                      {gap.suggestions.length > 0 ? gap.suggestions.map((suggestion) => (
+                        <Button
+                          key={`${suggestion.accountType}:${suggestion.accountId}`}
+                          size="sm"
+                          variant="secondary"
+                          disabled={busyMappingKey === `${gap.mappingType}:${gap.sourceKey}`}
+                          onClick={() => saveMapping(gap, suggestion)}
+                        >
+                          {suggestion.sourceKey}에 매핑
+                        </Button>
+                      )) : <span>계정 생성 필요 또는 수동 매핑 필요</span>}
+                    </div>
                   </div>
                 ))}
               </div></CardContent>
@@ -433,34 +532,64 @@ export function ImportsPage() {
               <div className="metric-card-top">
                 <CardTitle>거래 비교 결과</CardTitle>
                 <div className="import-actions">
-                  <label><span className="sr-only">상태 필터</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as ImportStatus | "all")}>
-                    <option value="all">전체 상태</option>
-                    {Object.entries(labels).map(([value, status]) => <option key={value} value={value}>{status.label}</option>)}
+                  <label><span className="sr-only">검토 필터</span><select value={viewFilter} onChange={(event) => setViewFilter(event.target.value as ImportViewFilter)}>
+                    <option value="all">전체</option>
+                    <option value="new">신규</option>
+                    <option value="update">수정 후보</option>
+                    <option value="transfer">이체</option>
+                    <option value="mapping">매핑 필요</option>
+                    <option value="benefit">카드혜택</option>
+                    <option value="review">검토 필요</option>
+                    <option value="duplicate">중복</option>
                   </select></label>
-                  <Button size="sm" disabled={busy || !result.schema.autoApplySupported || result.summary.autoCreatable === 0} onClick={apply}>
+                  <Button size="sm" disabled={busy || !result.schema.autoApplySupported || result.summary.autoCreatable === 0 || (runtimeStatus?.gmailImport.dryRunOnly ?? true)} onClick={apply}>
                     신규 확정 거래 자동 등록
                   </Button>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              <p className="metric-detail">수정·삭제 후보는 표시만 하며 자동 반영하지 않습니다. auto_creatable만 등록합니다.</p>
+              <p className="metric-detail">수정·삭제 후보는 표시만 하며 자동 반영하지 않습니다. dry-run-only에서는 원장 등록이 비활성화됩니다.</p>
               <div className="table-scroll"><table className="data-table import-table">
                 <thead><tr>
                   <th>원본 행</th><th>날짜</th><th>유형</th><th>자산</th><th>내용</th>
                   <th className="amount">승인금액</th><th className="amount">매입금액</th>
-                  <th className="amount">할인액</th><th>카드혜택 후보</th><th>상태</th><th>비교 근거</th>
+                  <th className="amount">할인액</th><th>카드혜택 후보</th><th>상태</th><th>비교 근거</th><th>액션</th>
                 </tr></thead>
                 <tbody>{filteredRows.map((row, index) => {
                   const status = labels[row.status];
                   return <tr key={`${row.transaction.sourceRowIndexes.join("-")}-${row.status}-${index}`}>
                     <td>{row.transaction.sourceRowIndexes.join(", ") || "이전 snapshot"}</td>
-                    <td>{row.transaction.occurredDate || "-"}</td><td>{row.transaction.entryType}</td><td>{row.transaction.sourceAssetName || "-"}</td>
+                    <td>{row.transaction.occurredDate || "-"}</td><td>{row.transaction.entryType === "transfer" ? "이체" : row.transaction.entryType}</td><td>{row.transaction.sourceAssetName || "-"}</td>
                     <td><strong>{row.transaction.item || "-"}</strong><small>{row.transaction.memo}</small></td>
                     <td className="amount">{won(row.transaction.approvalAmount)}</td><td className="amount">{won(row.transaction.postingAmount)}</td>
-                    <td className="amount">{won(row.transaction.discountAmount)}</td><td>{row.cardBenefitCandidate?.label ?? "-"}</td>
+                    <td className="amount">{won(row.transaction.discountAmount)}</td><td>
+                      <span>{row.cardBenefitCandidate?.label ?? "-"}</span>
+                      {row.benefitEventIntegrity !== "not_applicable" ? <small>{row.benefitEventIntegrity === "matched"
+                        ? "event 일치"
+                        : row.benefitEventIntegrity === "missing"
+                          ? "event 누락"
+                          : "금액 불일치"}</small> : null}
+                    </td>
                     <td><Badge tone={status.tone}>{status.label}</Badge></td>
-                    <td>{row.reason}{row.matchedWhooingEntryId ? ` · #${row.matchedWhooingEntryId}` : ""}</td>
+                    <td>
+                      <span>{row.reason}{row.matchedWhooingEntryId ? ` · mirror #${row.matchedWhooingEntryId}` : ""}</span>
+                      {row.transaction.entryType === "transfer" && row.transaction.sourceRowIndexes.length === 2
+                        ? <small>2개 편한가계부 row → 1개 Whooing transfer</small> : null}
+                      {row.changes?.length > 0 ? <small>수정 전 → 현재: {row.changes.map((change) => (
+                        `${change.label} ${changeValue(change.before)} → ${changeValue(change.after)}`
+                      )).join(" · ")}</small> : null}
+                      {row.mirrorChanges?.length > 0 ? <small>mirror → import: {row.mirrorChanges.map((change) => (
+                        `${change.label} ${changeValue(change.before)} → ${changeValue(change.after)}`
+                      )).join(" · ")}</small> : null}
+                    </td>
+                    <td>
+                      {row.status === "possible_update"
+                        ? <Button size="sm" disabled>수정 승인 준비 중</Button>
+                        : row.status === "auto_creatable"
+                          ? <Button size="sm" disabled={runtimeStatus?.gmailImport.dryRunOnly ?? true}>신규 등록</Button>
+                          : <span className="metric-detail">{row.status === "duplicate" ? "처리 없음" : "검토 필요"}</span>}
+                    </td>
                   </tr>;
                 })}</tbody>
               </table></div>

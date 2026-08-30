@@ -150,7 +150,8 @@ function reciprocalTransfer(outgoing: RawRow, incoming: RawRow) {
     && outgoing.occurredDate === incoming.occurredDate
     && outgoing.postingAmount === incoming.postingAmount
     && outgoing.assetName === incoming.categoryName
-    && outgoing.categoryName === incoming.assetName;
+    && outgoing.categoryName === incoming.assetName
+    && outgoing.memo.trim() === incoming.memo.trim();
 }
 
 function buildDrafts(rows: RawRow[]) {

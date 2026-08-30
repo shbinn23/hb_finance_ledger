@@ -90,6 +90,17 @@ test("parsePyeonhanRows merges reciprocal transfer rows into one transfer", () =
   assert.deepEqual(result.transactions[0].sourceRowIndexes, [2, 3]);
 });
 
+test("parsePyeonhanRows does not merge reciprocal-looking transfers with different memos", () => {
+  const result = parsePyeonhanRows([
+    header,
+    [46256, "우체국", "국민은행", null, null, 100000, "이체입금", "첫 이체", 100000, "KRW", 100000],
+    [46256, "국민은행", "우체국", null, null, 100000, "이체출금", "다른 이체", 100000, "KRW", 100000],
+  ]);
+
+  assert.equal(result.transactions.length, 2);
+  assert.equal(result.transactions.every((row) => !row.transferPairComplete), true);
+});
+
 test("parsePyeonhanRows keeps identical real transactions distinct with occurrence indexes", () => {
   const duplicate = [46249, "하나 MG+S", "선택", "식비", "배달", 10400, "지출", null, 10400, "KRW", 10400];
   const result = parsePyeonhanRows([header, duplicate, duplicate]);

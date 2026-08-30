@@ -39,6 +39,10 @@ function row(overrides: Partial<AutoImportRow> = {}): AutoImportRow {
     reason: "new",
     matchedWhooingEntryId: null,
     cardBenefitCandidate: null,
+    cardBenefitStatus: "not_applicable",
+    benefitEventIntegrity: "not_applicable",
+    changes: [],
+    mirrorChanges: [],
     mapping: {
       sourceAccount: { mappingType: "asset", sourceKey: "국민은행", accountType: "assets", accountId: "a1", confidence: 1 },
       counterpartyAccount: null,

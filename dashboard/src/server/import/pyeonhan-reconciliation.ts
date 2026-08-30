@@ -57,6 +57,22 @@ export interface PreviousImportRow {
   occurredDate?: string;
   entryType?: string;
   sourceAssetName?: string;
+  counterpartyAssetName?: string | null;
+  sourceCategoryName?: string | null;
+  sourceSubcategoryName?: string | null;
+  item?: string;
+  memo?: string;
+  postingAmount?: number;
+  approvalAmount?: number;
+}
+
+export interface ImportRowChange {
+  field: "occurredDate" | "sourceAssetName" | "counterpartyAssetName"
+    | "sourceCategoryName" | "sourceSubcategoryName" | "item" | "memo"
+    | "postingAmount" | "approvalAmount" | "leftAccount" | "rightAccount";
+  label: string;
+  before: string | number | null;
+  after: string | number | null;
 }
 
 export interface ResolvedImportMapping {
@@ -74,12 +90,17 @@ export interface ReconciledImportRow {
   cardBenefitCandidate: PyeonhanCardBenefitCandidate | null;
   cardBenefitStatus: ImportBenefitStatus;
   benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
+  changes: ImportRowChange[];
+  mirrorChanges: ImportRowChange[];
 }
 
 export interface ImportMappingGap {
   mappingType: ImportMapping["mappingType"];
   sourceKey: string;
   count: number;
+  amountTotal: number;
+  entryTypes: string[];
+  suggestions: ImportMapping[];
 }
 
 export interface PyeonhanReconciliationResult {
@@ -105,6 +126,84 @@ export interface PyeonhanReconciliationResult {
 
 function normalize(value: string | null | undefined) {
   return (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ko-KR");
+}
+
+function compact(value: string | null | undefined) {
+  return normalize(value).replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+const changeFields = [
+  ["occurredDate", "날짜"],
+  ["sourceAssetName", "자산"],
+  ["counterpartyAssetName", "상대 자산"],
+  ["sourceCategoryName", "분류"],
+  ["sourceSubcategoryName", "소분류"],
+  ["item", "내용"],
+  ["memo", "메모"],
+  ["postingAmount", "매입금액"],
+  ["approvalAmount", "승인금액"],
+] as const;
+
+function revisionChanges(
+  previous: PreviousImportRow,
+  transaction: NormalizedPyeonhanTransaction,
+): ImportRowChange[] {
+  return changeFields.flatMap(([field, label]) => {
+    const before = previous[field];
+    const after = transaction[field];
+    if (before === undefined || before === after) return [];
+    return [{ field, label, before, after }];
+  });
+}
+
+function mirrorChanges(row: ReconciledImportRow, entry: MirrorEntry | undefined): ImportRowChange[] {
+  if (!entry) return [];
+  const sides = expectedSides(row);
+  const comparisons: Array<[ImportRowChange["field"], string, string | number, string | number | null | undefined]> = [
+    ["occurredDate", "날짜", entry.occurredDate, row.transaction.occurredDate],
+    ["item", "내용", entry.item, row.transaction.item],
+    ["memo", "메모", entry.memo, row.transaction.memo],
+    ["postingAmount", "매입금액", entry.amount, row.transaction.postingAmount],
+    ["leftAccount", "차변 계정", `${entry.leftAccountType}:${entry.leftAccountId}`, `${sides.leftType}:${sides.leftId}`],
+    ["rightAccount", "대변 계정", `${entry.rightAccountType}:${entry.rightAccountId}`, `${sides.rightType}:${sides.rightId}`],
+  ];
+  return comparisons.flatMap(([field, label, before, after]) => (
+    after !== undefined && before !== after ? [{ field, label, before, after }] : []
+  ));
+}
+
+function isRevisionCandidate(
+  transaction: NormalizedPyeonhanTransaction,
+  previous: PreviousImportRow,
+) {
+  if (transaction.entryType !== previous.entryType) return false;
+  const sameDate = transaction.occurredDate === previous.occurredDate;
+  const sameAsset = normalize(transaction.sourceAssetName) === normalize(previous.sourceAssetName);
+  const sameItem = normalize(transaction.item) === normalize(previous.item);
+  const samePosting = transaction.postingAmount === previous.postingAmount;
+  return (sameDate && sameAsset) || (sameItem && (sameDate || sameAsset || samePosting));
+}
+
+function mappingSuggestions(gap: Omit<ImportMappingGap, "suggestions">, mappings: ImportMapping[]) {
+  const target = compact(gap.sourceKey);
+  const candidates = mappings.filter((mapping) => mapping.mappingType === gap.mappingType);
+  const scored = candidates.map((mapping) => {
+    const candidate = compact(mapping.sourceKey);
+    const score = target === candidate
+      ? 1
+      : target.includes(candidate) || candidate.includes(target)
+        ? Math.min(target.length, candidate.length) / Math.max(target.length, candidate.length)
+        : 0;
+    return { mapping, score };
+  }).filter(({ score }) => score >= 0.5)
+    .sort((a, b) => b.score - a.score || a.mapping.sourceKey.localeCompare(b.mapping.sourceKey, "ko-KR"));
+  const seen = new Set<string>();
+  return scored.flatMap(({ mapping }) => {
+    const key = `${mapping.accountType}:${mapping.accountId}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [mapping];
+  }).slice(0, 3);
 }
 
 function categoryKey(transaction: NormalizedPyeonhanTransaction) {
@@ -166,8 +265,8 @@ function manualReviewReason(transaction: NormalizedPyeonhanTransaction) {
 function unresolvedMappings(
   transaction: NormalizedPyeonhanTransaction,
   mapping: ResolvedImportMapping,
-): Array<Omit<ImportMappingGap, "count">> {
-  const gaps: Array<Omit<ImportMappingGap, "count">> = [];
+): Array<Pick<ImportMappingGap, "mappingType" | "sourceKey">> {
+  const gaps: Array<Pick<ImportMappingGap, "mappingType" | "sourceKey">> = [];
   if (!mapping.sourceAccount) gaps.push({ mappingType: "asset", sourceKey: transaction.sourceAssetName });
   if (transaction.entryType === "transfer" && !mapping.counterpartyAccount) {
     if (transaction.counterpartyAssetName) {
@@ -246,15 +345,6 @@ function benefitEventIntegrity(
     : "amount_mismatch";
 }
 
-function comparisonGroup(input: {
-  occurredDate?: string;
-  entryType?: string;
-  sourceAssetName?: string;
-}) {
-  if (!input.occurredDate || !input.entryType || !input.sourceAssetName) return null;
-  return `${input.occurredDate}|${input.entryType}|${normalize(input.sourceAssetName)}`;
-}
-
 function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
   return {
     transaction: {
@@ -283,6 +373,8 @@ function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
     cardBenefitCandidate: null,
     cardBenefitStatus: "not_applicable",
     benefitEventIntegrity: "not_applicable",
+    changes: [],
+    mirrorChanges: [],
   };
 }
 
@@ -302,16 +394,14 @@ export function reconcilePyeonhanTransactions({
   const currentIdentities = new Set(transactions.map((row) => row.sourceIdentityKey));
   const missingPrevious = previousRows.filter((row) => !currentIdentities.has(row.sourceIdentityKey));
   const newTransactions = transactions.filter((row) => !previousByIdentity.has(row.sourceIdentityKey));
-  const missingByGroup = new Map<string, PreviousImportRow[]>();
-  const newCountByGroup = new Map<string, number>();
-  missingPrevious.forEach((row) => {
-    const group = comparisonGroup(row);
-    if (group) missingByGroup.set(group, [...(missingByGroup.get(group) ?? []), row]);
-  });
-  newTransactions.forEach((row) => {
-    const group = comparisonGroup(row);
-    if (group) newCountByGroup.set(group, (newCountByGroup.get(group) ?? 0) + 1);
-  });
+  const revisionCandidates = new Map(newTransactions.map((transaction) => [
+    transaction.sourceIdentityKey,
+    missingPrevious.filter((previous) => isRevisionCandidate(transaction, previous)),
+  ]));
+  const candidateUseCount = new Map<string, number>();
+  revisionCandidates.forEach((candidates) => candidates.forEach((candidate) => {
+    candidateUseCount.set(candidate.sourceIdentityKey, (candidateUseCount.get(candidate.sourceIdentityKey) ?? 0) + 1);
+  }));
   const claimedPreviousIdentities = new Set<string>();
   const rows = transactions.map((transaction): ReconciledImportRow => {
     const mapping = resolveMapping(transaction, mappings);
@@ -327,6 +417,8 @@ export function reconcilePyeonhanTransactions({
         ? cardBenefitCandidate ? "needs_review" : "rule_uncertain"
         : "not_applicable",
       benefitEventIntegrity: "not_applicable",
+      changes: [],
+      mirrorChanges: [],
     };
     const manualReason = manualReviewReason(transaction);
     if (manualReason) return { ...base, status: "review_required", reason: manualReason };
@@ -344,7 +436,9 @@ export function reconcilePyeonhanTransactions({
     ));
 
     if (previous && previous.sourceContentHash !== transaction.sourceContentHash) {
-      if (similarMirror) usedMirrorIds.add(similarMirror.entryId);
+      const previousMirror = mirrorEntries.find((entry) => entry.entryId === previous.matchedWhooingEntryId);
+      const evidence = similarMirror ?? previousMirror;
+      if (evidence) usedMirrorIds.add(evidence.entryId);
       const conflict = similarMirror
         && previous.matchedWhooingEntryId !== null
         && similarMirror.entryId !== previous.matchedWhooingEntryId;
@@ -354,7 +448,9 @@ export function reconcilePyeonhanTransactions({
         reason: conflict
           ? "이전 import와 다른 Whooing 거래가 함께 발견됐습니다."
           : "같은 source identity의 내용이 이전 import와 달라졌습니다.",
-        matchedWhooingEntryId: similarMirror?.entryId ?? previous.matchedWhooingEntryId,
+        matchedWhooingEntryId: evidence?.entryId ?? previous.matchedWhooingEntryId,
+        changes: revisionChanges(previous, transaction),
+        mirrorChanges: mirrorChanges(base, evidence),
       };
     }
 
@@ -367,16 +463,27 @@ export function reconcilePyeonhanTransactions({
       };
     }
 
-    const group = comparisonGroup(transaction);
-    const replacementCandidates = group ? missingByGroup.get(group) ?? [] : [];
-    if (group && replacementCandidates.length === 1 && newCountByGroup.get(group) === 1) {
+    const replacementCandidates = revisionCandidates.get(transaction.sourceIdentityKey) ?? [];
+    if (replacementCandidates.length === 1
+      && candidateUseCount.get(replacementCandidates[0].sourceIdentityKey) === 1) {
       const replacement = replacementCandidates[0];
       claimedPreviousIdentities.add(replacement.sourceIdentityKey);
+      const previousMirror = mirrorEntries.find((entry) => entry.entryId === replacement.matchedWhooingEntryId);
+      if (previousMirror) usedMirrorIds.add(previousMirror.entryId);
       return {
         ...base,
         status: "possible_update",
-        reason: "같은 날짜·유형·자산의 이전 거래와 금액 또는 식별 정보가 달라졌습니다.",
+        reason: "유일하게 대응하는 이전 snapshot 거래와 내용이 달라졌습니다.",
         matchedWhooingEntryId: replacement.matchedWhooingEntryId,
+        changes: revisionChanges(replacement, transaction),
+        mirrorChanges: mirrorChanges(base, previousMirror),
+      };
+    }
+    if (replacementCandidates.length > 0) {
+      return {
+        ...base,
+        status: "conflict",
+        reason: "이전 snapshot 거래와 대응 후보가 여러 건이어서 신규 등록 여부를 수동 확인해야 합니다.",
       };
     }
 
@@ -405,6 +512,7 @@ export function reconcilePyeonhanTransactions({
           : "할인 rule을 확정할 수 없어 자동 등록하지 않습니다.",
         matchedWhooingEntryId: similarMirror?.entryId ?? null,
         benefitEventIntegrity: eventIntegrity,
+        mirrorChanges: mirrorChanges(base, similarMirror),
       };
     }
 
@@ -424,6 +532,7 @@ export function reconcilePyeonhanTransactions({
         status: "possible_update",
         reason: "날짜·금액·계정은 같지만 내용이 다른 Whooing 거래가 있습니다.",
         matchedWhooingEntryId: similarMirror.entryId,
+        mirrorChanges: mirrorChanges(base, similarMirror),
       };
     }
     return { ...base, status: "auto_creatable", reason: "매핑이 완료된 신규 거래입니다." };
@@ -442,7 +551,13 @@ export function reconcilePyeonhanTransactions({
       if (!gap.sourceKey) return;
       const key = `${gap.mappingType}:${normalize(gap.sourceKey)}`;
       const current = mappingGapCounts.get(key);
-      mappingGapCounts.set(key, { ...gap, count: (current?.count ?? 0) + 1 });
+      mappingGapCounts.set(key, {
+        ...gap,
+        count: (current?.count ?? 0) + 1,
+        amountTotal: (current?.amountTotal ?? 0) + row.transaction.postingAmount,
+        entryTypes: [...new Set([...(current?.entryTypes ?? []), row.transaction.entryType])],
+        suggestions: [],
+      });
     });
   });
   const count = (status: ImportReconciliationStatus) => rows.filter((row) => row.status === status).length;
@@ -450,7 +565,10 @@ export function reconcilePyeonhanTransactions({
   return {
     rows,
     possibleDeletes,
-    mappingGaps: [...mappingGapCounts.values()].sort((a, b) => (
+    mappingGaps: [...mappingGapCounts.values()].map((gap) => ({
+      ...gap,
+      suggestions: mappingSuggestions(gap, mappings),
+    })).sort((a, b) => (
       a.mappingType.localeCompare(b.mappingType) || a.sourceKey.localeCompare(b.sourceKey, "ko-KR")
     )),
     summary: {
