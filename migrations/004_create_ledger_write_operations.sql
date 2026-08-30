@@ -1,8 +1,11 @@
+begin;
+
 create schema if not exists app;
 
 create table if not exists app.ledger_write_operations (
   id bigserial primary key,
-  operation_key text not null unique,
+  operation_key text not null unique
+    check (char_length(operation_key) between 8 and 128),
   source text not null,
   entry_type text not null,
   occurred_date date not null,
@@ -20,3 +23,5 @@ create table if not exists app.ledger_write_operations (
 
 create index if not exists ledger_write_operations_status_idx
   on app.ledger_write_operations(status, sync_status, created_at);
+
+commit;

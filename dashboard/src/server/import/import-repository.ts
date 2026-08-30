@@ -6,6 +6,10 @@ import type {
   PreviousImportRow,
   ReconciledImportRow,
 } from "./pyeonhan-reconciliation.ts";
+import type {
+  ImportBatchStatus,
+  PersistedImportBatchStatus,
+} from "./pyeonhan-types.ts";
 
 const sectionId = process.env.WHOOING_SECTION_ID ?? "s152045";
 
@@ -153,6 +157,7 @@ export async function getPreviousImportRowsForRange(
       occurred_date::text, entry_type, source_asset_name
     from app.import_rows
     where occurred_date between $1::date and $2::date
+      and status in ('created', 'duplicate')
     order by source_identity_key, created_at desc
     `,
     [startDate, endDate],
@@ -168,8 +173,25 @@ export async function getPreviousImportRowsForRange(
   }));
 }
 
+export async function getLatestImportBatchForSourceFile(sourceFileHash: string) {
+  if (!(await getImportSchemaStatus()).importTablesAvailable) return null;
+  const result = await query<{ id: string; status: PersistedImportBatchStatus }>(
+    `
+    select id::text, status
+    from app.import_batches
+    where source = 'pyeonhan_excel' and source_file_hash = $1
+    order by created_at desc
+    limit 1
+    `,
+    [sourceFileHash],
+  );
+  const row = result.rows[0];
+  return row ? { batchId: Number(row.id), status: row.status } : null;
+}
+
 export async function createImportBatch(input: {
   filename: string;
+  sourceFileHash: string;
   startDate: string;
   endDate: string;
   rows: ReconciledImportRow[];
@@ -182,13 +204,14 @@ export async function createImportBatch(input: {
   const batch = await query<{ id: string }>(
     `
     insert into app.import_batches (
-      source, filename, export_started_at, export_ended_at, status,
+      source, filename, source_file_hash, export_started_at, export_ended_at, status,
       total_count, review_count, duplicate_count
-    ) values ('pyeonhan_excel', $1, $2::date, $3::date, 'applying', $4, $5, $6)
+    ) values ('pyeonhan_excel', $1, $2, $3::date, $4::date, 'applying', $5, $6, $7)
     returning id::text
     `,
     [
       input.filename,
+      input.sourceFileHash,
       input.startDate,
       input.endDate,
       input.rows.length,
@@ -225,11 +248,10 @@ export async function createImportBatch(input: {
     );
     rowIds.set(transaction.sourceIdentityKey, Number(inserted.rows[0].id));
   }
-  return { batchId, rowIds };
+  return { batchId, rowIds, reviewCount };
 }
 
 export async function finishImportRow(input: {
-  batchId: number;
   rowId: number;
   operationKey: string;
   status: "created" | "failed";
@@ -239,15 +261,16 @@ export async function finishImportRow(input: {
   await query(
     `
     insert into app.import_write_operations (
-      batch_id, row_id, operation_type, operation_key, status, whooing_entry_id, error_message
-    ) values ($1, $2, 'create', $3, $4, $5, $6)
+      row_id, operation_type, operation_key, status, whooing_entry_id, error_message
+    ) values ($1, 'create', $2, $3, $4, $5)
     on conflict (operation_key) do update set
+      row_id = excluded.row_id,
       status = excluded.status,
       whooing_entry_id = excluded.whooing_entry_id,
       error_message = excluded.error_message,
       updated_at = now()
     `,
-    [input.batchId, input.rowId, input.operationKey, input.status, input.whooingEntryId, input.errorMessage ?? null],
+    [input.rowId, input.operationKey, input.status, input.whooingEntryId, input.errorMessage ?? null],
   );
   await query(
     `
@@ -261,13 +284,19 @@ export async function finishImportRow(input: {
   );
 }
 
-export async function finishImportBatch(batchId: number, autoCreatedCount: number) {
+export async function finishImportBatch(input: {
+  batchId: number;
+  status: ImportBatchStatus;
+  autoCreatedCount: number;
+  writeFailedCount: number;
+}) {
   await query(
     `
     update app.import_batches
-    set status = 'completed', auto_created_count = $2, processed_at = now()
+    set status = $2, auto_created_count = $3, write_failed_count = $4,
+        processed_at = now(), updated_at = now()
     where id = $1
     `,
-    [batchId, autoCreatedCount],
+    [input.batchId, input.status, input.autoCreatedCount, input.writeFailedCount],
   );
 }

@@ -4,8 +4,13 @@ import {
   createImportBatch,
   finishImportBatch,
   finishImportRow,
+  getLatestImportBatchForSourceFile,
 } from "@/server/import/import-repository";
-import { applyAutoCreatableRows } from "@/server/import/pyeonhan-import-service";
+import {
+  applyAutoCreatableRows,
+  canRetryImportBatch,
+  resolveImportBatchStatus,
+} from "@/server/import/pyeonhan-import-service";
 import {
   buildPyeonhanDryRun,
   validatePyeonhanUpload,
@@ -34,8 +39,16 @@ export async function POST(request: NextRequest) {
         message: "import 및 ledger operation migration 적용 전에는 dry-run만 사용할 수 있습니다.",
       }, { status: 503 });
     }
+    const previousBatch = await getLatestImportBatchForSourceFile(dryRun.sourceFileHash);
+    if (previousBatch && !canRetryImportBatch(previousBatch.status)) {
+      return NextResponse.json({
+        ok: false,
+        message: `동일한 Excel 파일이 이미 처리되었습니다. (batch ${previousBatch.batchId})`,
+      }, { status: 409 });
+    }
     const batch = await createImportBatch({
       filename: file.name,
+      sourceFileHash: dryRun.sourceFileHash,
       startDate: dryRun.startDate,
       endDate: dryRun.endDate,
       rows: dryRun.rows,
@@ -48,7 +61,6 @@ export async function POST(request: NextRequest) {
         const rowId = batch.rowIds.get(row.transaction.sourceIdentityKey);
         if (!rowId) return;
         await finishImportRow({
-          batchId: batch.batchId,
           rowId,
           operationKey: writeResult.operationKey,
           status: writeResult.created ? "created" : "failed",
@@ -57,10 +69,21 @@ export async function POST(request: NextRequest) {
         });
       },
     });
-    await finishImportBatch(batch.batchId, result.created);
+    const batchStatus = resolveImportBatchStatus({
+      created: result.created,
+      failed: result.failed,
+      reviewCount: batch.reviewCount,
+    });
+    await finishImportBatch({
+      batchId: batch.batchId,
+      status: batchStatus,
+      autoCreatedCount: result.created,
+      writeFailedCount: result.failed,
+    });
     return NextResponse.json({
       ok: result.failed === 0,
       batchId: batch.batchId,
+      batchStatus,
       ...result,
       message: result.failed === 0
         ? `${result.created}건을 후잉 원장에 등록했습니다.`

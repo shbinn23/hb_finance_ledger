@@ -3,6 +3,10 @@ import type {
   DashboardLedgerEntryResult,
 } from "../ledger/ledger-entry-service.ts";
 import type { ReconciledImportRow } from "./pyeonhan-reconciliation.ts";
+import type {
+  ImportBatchStatus,
+  PersistedImportBatchStatus,
+} from "./pyeonhan-types.ts";
 
 export type AutoImportRow = ReconciledImportRow;
 
@@ -12,6 +16,20 @@ export interface ImportWriteResult {
   created: boolean;
   entryId: number | null;
   message: string;
+}
+
+export function resolveImportBatchStatus(input: {
+  created: number;
+  failed: number;
+  reviewCount: number;
+}): ImportBatchStatus {
+  if (input.failed > 0) return input.created > 0 ? "partial" : "failed";
+  if (input.created === 0 && input.reviewCount > 0) return "review";
+  return "completed";
+}
+
+export function canRetryImportBatch(status: PersistedImportBatchStatus) {
+  return status === "review" || status === "partial" || status === "failed";
 }
 
 function requestForRow(row: AutoImportRow): DashboardLedgerEntryRequest {

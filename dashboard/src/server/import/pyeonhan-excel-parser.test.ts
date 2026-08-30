@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   PyeonhanExcelFormatError,
   parsePyeonhanRows,
+  pyeonhanSourceFileHash,
 } from "./pyeonhan-excel-parser.ts";
 
 const header = [
@@ -15,6 +16,35 @@ test("parsePyeonhanRows validates the positional 11-column contract", () => {
     () => parsePyeonhanRows([[...header.slice(0, 10), "잔액"]]),
     PyeonhanExcelFormatError,
   );
+});
+
+test("parsePyeonhanRows rejects zero-value ledger rows", () => {
+  assert.throws(
+    () => parsePyeonhanRows([
+      header,
+      [46264, "국민은행", "선택", "식비", "점심", 0, "지출", null, 0, "KRW", 0],
+    ]),
+    PyeonhanExcelFormatError,
+  );
+});
+
+test("parsePyeonhanRows rejects approval amounts below posting amounts", () => {
+  assert.throws(
+    () => parsePyeonhanRows([
+      header,
+      [46264, "국민은행", "선택", "식비", "점심", 9000, "지출", null, 8000, "KRW", 9000],
+    ]),
+    /승인 금액은 KRW 금액보다 작을 수 없습니다/,
+  );
+});
+
+test("pyeonhanSourceFileHash identifies identical file bytes", () => {
+  const first = pyeonhanSourceFileHash(Buffer.from("same workbook"));
+  const second = pyeonhanSourceFileHash(Buffer.from("same workbook"));
+
+  assert.equal(first, second);
+  assert.match(first, /^[a-f0-9]{64}$/);
+  assert.notEqual(first, pyeonhanSourceFileHash(Buffer.from("changed workbook")));
 });
 
 test("parsePyeonhanRows parses Excel serial dates and duplicate asset headers by position", () => {

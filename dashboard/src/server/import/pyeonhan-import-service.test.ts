@@ -4,6 +4,8 @@ import type { DashboardLedgerEntryRequest, DashboardLedgerEntryResult } from "..
 import type { NormalizedPyeonhanTransaction } from "./pyeonhan-types.ts";
 import {
   applyAutoCreatableRows,
+  canRetryImportBatch,
+  resolveImportBatchStatus,
   type AutoImportRow,
 } from "./pyeonhan-import-service.ts";
 
@@ -131,4 +133,20 @@ test("auto import reports ledger failures without retrying review rows", async (
   assert.equal(result.created, 0);
   assert.equal(result.failed, 1);
   assert.equal(result.results[0].message, "duplicate blocked");
+});
+
+test("import batch status distinguishes completed, partial, review, and failed", () => {
+  assert.equal(resolveImportBatchStatus({ created: 2, failed: 0, reviewCount: 1 }), "completed");
+  assert.equal(resolveImportBatchStatus({ created: 1, failed: 1, reviewCount: 0 }), "partial");
+  assert.equal(resolveImportBatchStatus({ created: 0, failed: 0, reviewCount: 2 }), "review");
+  assert.equal(resolveImportBatchStatus({ created: 0, failed: 2, reviewCount: 0 }), "failed");
+});
+
+test("review and failed batches can be retried without permitting concurrent or completed reapply", () => {
+  assert.equal(canRetryImportBatch("review"), true);
+  assert.equal(canRetryImportBatch("partial"), true);
+  assert.equal(canRetryImportBatch("failed"), true);
+  assert.equal(canRetryImportBatch("pending"), false);
+  assert.equal(canRetryImportBatch("applying"), false);
+  assert.equal(canRetryImportBatch("completed"), false);
 });

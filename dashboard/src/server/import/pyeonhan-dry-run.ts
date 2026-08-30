@@ -1,4 +1,7 @@
-import { parsePyeonhanWorkbook } from "./pyeonhan-excel-parser.ts";
+import {
+  parsePyeonhanWorkbook,
+  pyeonhanSourceFileHash,
+} from "./pyeonhan-excel-parser.ts";
 import {
   getImportMappings,
   getImportSchemaStatus,
@@ -17,7 +20,8 @@ export function validatePyeonhanUpload(file: File | null) {
 }
 
 export async function buildPyeonhanDryRun(file: File) {
-  const parsed = await parsePyeonhanWorkbook(Buffer.from(await file.arrayBuffer()));
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const parsed = await parsePyeonhanWorkbook(fileBuffer);
   const dates = parsed.transactions.map((row) => row.occurredDate).sort();
   if (dates.length === 0) throw new Error("Excel에 거래가 없습니다.");
   const startDate = dates[0];
@@ -36,6 +40,7 @@ export async function buildPyeonhanDryRun(file: File) {
   });
   return {
     filename: file.name,
+    sourceFileHash: pyeonhanSourceFileHash(fileBuffer),
     sourceRowCount: parsed.sourceRowCount,
     startDate,
     endDate,

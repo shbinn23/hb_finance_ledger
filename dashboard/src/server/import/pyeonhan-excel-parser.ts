@@ -48,10 +48,11 @@ function text(value: unknown) {
 
 function amount(value: unknown, label: string, rowIndex: number) {
   const parsed = Number(value ?? 0);
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  const rounded = Math.round(parsed);
+  if (!Number.isFinite(parsed) || rounded <= 0) {
     throw new PyeonhanExcelFormatError(`${rowIndex}행 ${label} 금액이 올바르지 않습니다.`);
   }
-  return Math.round(parsed);
+  return rounded;
 }
 
 function excelDate(value: unknown, rowIndex: number) {
@@ -72,6 +73,10 @@ function excelDate(value: unknown, rowIndex: number) {
 
 function sha256(parts: unknown[]) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+}
+
+export function pyeonhanSourceFileHash(buffer: Buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
 }
 
 function validateHeaders(row: unknown[]) {
@@ -113,6 +118,11 @@ function typeFromSource(value: string): PyeonhanEntryType {
 
 function rowDraft(row: RawRow): TransactionDraft {
   const entryType = typeFromSource(row.sourceType);
+  if (row.approvalAmount < row.postingAmount) {
+    throw new PyeonhanExcelFormatError(
+      `${row.rowIndex}행 승인 금액은 KRW 금액보다 작을 수 없습니다.`,
+    );
+  }
   const transferIn = row.sourceType === "이체입금";
   return {
     sourceRowIndexes: [row.rowIndex],

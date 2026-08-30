@@ -151,3 +151,48 @@ pipeline. A future runtime adapter will use:
 Before enabling polling, configure Google OAuth with the minimum `gmail.readonly` scope, durable
 processed-attachment identity storage, attachment size limits, and retry policy. Never commit Gmail
 credentials or tokens.
+
+### Import migration verification
+
+Apply migrations `004` and `005` only after reviewing the target database. After applying them,
+verify the created objects, columns, and constraints with read-only queries:
+
+```sql
+select to_regclass('app.ledger_write_operations'),
+       to_regclass('app.import_batches'),
+       to_regclass('app.import_rows'),
+       to_regclass('app.import_mappings'),
+       to_regclass('app.import_write_operations');
+
+select table_name, column_name, data_type, is_nullable
+from information_schema.columns
+where table_schema = 'app'
+  and table_name in (
+    'ledger_write_operations',
+    'import_batches',
+    'import_rows',
+    'import_mappings',
+    'import_write_operations'
+  )
+order by table_name, ordinal_position;
+
+select conrelid::regclass, conname, pg_get_constraintdef(oid)
+from pg_constraint
+where connamespace = 'app'::regnamespace
+order by conrelid::regclass::text, conname;
+```
+
+Both migrations are transactional. If an apply fails, PostgreSQL rolls back that migration. Before
+production data exists, a manual rollback can drop the import tables in dependency order and then
+drop `app.ledger_write_operations`; after imports exist, back up the `app` schema and use a corrective
+migration instead of dropping tables.
+
+```sql
+begin;
+drop table if exists app.import_write_operations;
+drop table if exists app.import_rows;
+drop table if exists app.import_mappings;
+drop table if exists app.import_batches;
+drop table if exists app.ledger_write_operations;
+commit;
+```
