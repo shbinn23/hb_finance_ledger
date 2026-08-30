@@ -131,8 +131,8 @@ Supported entry types are expense, income, transfer, card payment, and balance a
 `/imports` accepts a Pyeonhan Ledger `.xlsx` snapshot and compares its normalized transactions with
 the current `whooing.entries` mirror and prior import snapshots. Results are separated into automatic
 create candidates, duplicates, mapping gaps, update candidates, delete candidates, conflicts, and
-review-required rows. Updates and deletes are never applied automatically. Discounted rows whose card
-benefit rule cannot be identified also remain review-only.
+review-required rows. Updates and deletes are never applied automatically. All discounted rows remain
+review-only; exact card-benefit candidates are displayed as operator evidence and are not written yet.
 
 Automatic creation requires both `migrations/004_create_ledger_write_operations.sql` and
 `migrations/005_create_pyeonhan_import_tables.sql`. Without those migrations, `/imports` provides
@@ -142,14 +142,17 @@ ledger write service; Whooing remains the source of truth and local sync remains
 ### Gmail watcher skeleton
 
 Gmail OAuth and network polling are not implemented yet. The current adapter boundary creates a stable
-identity from Gmail message and attachment IDs, then hands downloaded attachment bytes to the import
+identity from Gmail message and attachment IDs, checks the attachment SHA-256 against prior imports,
+then hands new attachment bytes to the import
 pipeline. A future runtime adapter will use:
 
-- `PYEONHAN_GMAIL_QUERY`: Gmail query selecting Pyeonhan Ledger export messages
-- `PYEONHAN_GMAIL_POLL_INTERVAL_MS`: polling interval
+- `PYEONHAN_GMAIL_QUERY`: Gmail query selecting Pyeonhan Ledger export messages. The suggested default is
+  `has:attachment filename:xlsx subject:(편한가계부 OR 가계부)`.
+- `PYEONHAN_GMAIL_POLL_INTERVAL_MS`: polling interval in milliseconds. The suggested default is 300000.
 
 Before enabling polling, configure Google OAuth with the minimum `gmail.readonly` scope, durable
-processed-attachment identity storage, attachment size limits, and retry policy. Never commit Gmail
+processed-attachment identity storage, source-file hash lookup, attachment size limits, and retry policy.
+The watcher must never delete or mutate Gmail messages. Never commit Gmail
 credentials or tokens.
 
 ### Import migration verification

@@ -25,6 +25,7 @@ test("gmail watcher handoff skips processed attachments and passes new bytes to 
   let imports = 0;
   const skipped = await processGmailAttachment(attachment, {
     wasProcessed: async () => true,
+    wasSourceFileProcessed: async () => false,
     importAttachment: async () => {
       imports += 1;
       return { batchId: 1 };
@@ -32,6 +33,7 @@ test("gmail watcher handoff skips processed attachments and passes new bytes to 
   });
   const processed = await processGmailAttachment(attachment, {
     wasProcessed: async () => false,
+    wasSourceFileProcessed: async () => false,
     importAttachment: async (received) => {
       imports += 1;
       assert.equal(received.bytes.toString(), "xlsx");
@@ -42,4 +44,22 @@ test("gmail watcher handoff skips processed attachments and passes new bytes to 
   assert.equal(skipped.status, "duplicate");
   assert.equal(processed.status, "handed_off");
   assert.equal(imports, 1);
+});
+
+test("gmail watcher blocks identical attachment bytes across different messages", async () => {
+  let imports = 0;
+  const result = await processGmailAttachment(attachment, {
+    wasProcessed: async () => false,
+    wasSourceFileProcessed: async (sourceFileHash) => {
+      assert.match(sourceFileHash, /^[a-f0-9]{64}$/);
+      return true;
+    },
+    importAttachment: async () => {
+      imports += 1;
+      return { batchId: 3 };
+    },
+  });
+
+  assert.equal(result.status, "duplicate_file");
+  assert.equal(imports, 0);
 });
