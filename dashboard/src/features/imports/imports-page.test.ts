@@ -25,8 +25,8 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /검토 batch 저장/);
   assert.match(source, /후잉 원장은 수정하지 않고 app\.card_benefit_events만 생성합니다/);
   assert.match(source, /원장 수정 없음, 카드혜택 event만 생성/);
-  assert.match(source, /수입 의미가 섞여 있어 수동 정책 필요/);
-  assert.match(source, /자동 삭제와 신규 계정 자동 생성은 지원하지 않습니다/);
+  assert.match(source, /환급·캐시백·민생지원쿠폰은 review-only/);
+  assert.match(source, /새 계정은 명확한 후보를 사용자가 승인한 경우에만 생성합니다/);
   assert.match(source, /Gmail 자동 감지/);
   assert.match(source, /Gmail dry-run 확인/);
   assert.match(source, /신규 거래 후보/);
@@ -34,10 +34,10 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /이체 후보/);
   assert.match(source, /수정 전 → 현재/);
   assert.match(source, /2개 편한가계부 row → 1개 Whooing transfer/);
-  assert.match(source, /계정 생성 필요 또는 수동 매핑 필요/);
+  assert.match(source, /새 계정 생성 승인/);
   assert.match(source, /dry-run-only에서는 원장 등록이 비활성화됩니다/);
   assert.match(source, /\/api\/imports\/gmail\/poll/);
-  assert.match(source, /메일과 첨부를 읽기만 하며 후잉 원장은 변경하지 않습니다/);
+  assert.match(source, /Gmail은 읽기 전용입니다/);
   assert.match(source, /dry-run only/);
   assert.match(source, /event 누락/);
   assert.match(source, /금액 불일치/);
@@ -48,8 +48,7 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /현재 추가로 승인할 카드혜택 후보는 없습니다/);
   assert.match(source, /감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다/);
   assert.match(source, /신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다/);
-  assert.match(source, /환급\/캐시백은 수입, 지출 환급, 카드 할인 중 의미가 섞일 수 있어 자동 처리하지 않습니다/);
-  assert.match(source, /민생지원쿠폰 차액조정은 balance adjustment 또는 별도 지원금 처리 정책 확정 전까지 review-only입니다/);
+  assert.match(source, /삭제·충돌·환급·캐시백·민생지원쿠폰은 review-only/);
   assert.match(source, /\/api\/imports\/actions\/register/);
   assert.match(source, /\/api\/imports\/actions\/approve-update/);
   assert.match(source, /\/api\/imports\/actions\/review/);
@@ -57,6 +56,12 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /Whooing 원장에 실제 등록/);
   assert.match(source, /Whooing 거래를 실제 수정/);
   assert.match(source, /작업 이력/);
-  assert.match(source, /자동 삭제와 신규 계정 자동 생성은 지원하지 않습니다/);
+  assert.match(source, /새 계정 생성 승인/);
+  assert.match(source, /Gmail 가져오기 실행/);
+  assert.match(source, /safe 자동 반영/);
+  assert.match(source, /최근 Gmail poll 결과/);
+  assert.match(source, /계정\/매핑/);
+  assert.match(source, /recommendedSectionId/);
+  assert.match(source, /\/api\/imports\/actions\/create-account/);
   assert.match(source, /confirmed: true/);
 });

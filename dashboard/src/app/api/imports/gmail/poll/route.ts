@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runRuntimeGmailImportDryRunPoll } from "@/server/import/gmail-import-runtime-server";
+import { runRuntimeGmailImportPoll } from "@/server/import/gmail-import-runtime-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
   }
   pollInProgress = true;
   try {
-    const result = await runRuntimeGmailImportDryRunPoll();
+    const result = await runRuntimeGmailImportPoll();
     if (result.status === "disabled") {
       return NextResponse.json({ ok: false, ...result, message: "Gmail import가 비활성화되어 있습니다." }, { status: 409 });
     }
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       ...result,
-      message: `메일 ${result.checkedMessages}건에서 Excel ${result.foundAttachments}개를 확인했습니다. 신규 batch ${result.importedBatches}개, 재사용 ${result.reusedBatches}개, 무효 첨부 ${result.skippedInvalidAttachments}개입니다. 신규 row ${result.createdRows}건 중 수정 ${result.possibleUpdateCount}건, 매핑 ${result.mappingRequiredCount}건, 자동등록 후보 ${result.autoCreatableCount}건입니다.`,
+      message: `메일 ${result.checkedMessages}건에서 Excel ${result.foundAttachments}개를 확인했습니다. 신규 batch ${result.importedBatches}개, 재사용 ${result.reusedBatches}개, 실행 ${result.executedCount}건, 검토 유지 ${result.blockedReviewOnlyCount}건, 실패 ${result.failedCount}건입니다.`,
     });
   } catch (error) {
     const knownErrors = new Set([
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       : "gmail_poll_failed";
     const safeMessage = code !== "gmail_poll_failed"
       ? "Gmail read-only 확인에 실패했습니다. OAuth 권한과 검색 조건을 확인해 주세요."
-      : "Gmail 첨부 import dry-run 중 오류가 발생했습니다.";
+      : "Gmail 첨부 import 처리 중 오류가 발생했습니다.";
     return NextResponse.json({ ok: false, error: code, message: safeMessage }, { status: 502 });
   } finally {
     pollInProgress = false;

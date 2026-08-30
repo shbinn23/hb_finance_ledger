@@ -19,6 +19,7 @@ services:
       retries: 5
 
   dashboard:
+    image: hb-finance-ledger-dashboard:local
     build:
       context: ./dashboard
       dockerfile: Dockerfile
@@ -45,6 +46,18 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  gmail-import-worker:
+    image: hb-finance-ledger-dashboard:local
+    platform: linux/amd64
+    restart: unless-stopped
+    command: node scripts/gmail-import-worker.mjs
+    environment:
+      DASHBOARD_INTERNAL_URL: http://dashboard:3000
+      GMAIL_IMPORT_POLL_INTERVAL_MS: ${GMAIL_IMPORT_POLL_INTERVAL_MS:-300000}
+    depends_on:
+      dashboard:
+        condition: service_started
 
   ml-engine:
     build:

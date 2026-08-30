@@ -5,6 +5,7 @@ import {
   importWritesAreDryRunOnly,
   parseImportCreateRequest,
   parseImportBenefitRequest,
+  parseImportAccountCreateRequest,
   parseImportMappingRequest,
   parseImportRowActionRequest,
   parseImportReviewRequest,
@@ -97,4 +98,18 @@ test("benefit approval requires confirmation, row id, and rule id", () => {
   });
   assert.equal(parseImportBenefitRequest({ importRowId: 8, ruleId: "rule-1" }).ok, false);
   assert.equal(parseImportBenefitRequest({ confirmed: true, importRowId: 8, ruleId: "" }).ok, false);
+});
+
+test("account creation requires approval and a compatible mapping type", () => {
+  assert.equal(parseImportAccountCreateRequest({
+    confirmed: true, mappingType: "asset", sourceKey: "신한 9단적금",
+    accountType: "assets", title: "신한 9단적금",
+  }).ok, true);
+  assert.equal(parseImportAccountCreateRequest({
+    mappingType: "asset", sourceKey: "신한 9단적금", accountType: "assets", title: "신한 9단적금",
+  }).ok, false);
+  assert.equal(parseImportAccountCreateRequest({
+    confirmed: true, mappingType: "expense_category", sourceKey: "교육",
+    accountType: "assets", title: "교육",
+  }).ok, false);
 });

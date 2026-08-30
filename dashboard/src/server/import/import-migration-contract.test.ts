@@ -20,6 +20,10 @@ const importActionOperations = readFileSync(
   resolve(migrationRoot, "008_expand_import_action_operations.sql"),
   "utf8",
 );
+const importAccountCreateOperations = readFileSync(
+  resolve(migrationRoot, "009_add_import_account_create_operations.sql"),
+  "utf8",
+);
 const importRepository = readFileSync(
   resolve(import.meta.dirname, "import-repository.ts"),
   "utf8",
@@ -94,4 +98,13 @@ test("import action migration expands operation types without applying destructi
   assert.match(importActionOperations, /where operation_type in \('create', 'benefit'\)/);
   assert.doesNotMatch(importActionOperations, /drop table/i);
   assert.match(importActionOperations, /commit;\s*$/i);
+});
+
+test("account creation migration is transactional and resumable", () => {
+  assert.match(importAccountCreateOperations, /^begin;/i);
+  assert.match(importAccountCreateOperations, /whooing_account_id text/);
+  assert.match(importAccountCreateOperations, /'account_create'/);
+  assert.match(importAccountCreateOperations, /operation_type in \('mapping', 'account_create'\)/);
+  assert.doesNotMatch(importAccountCreateOperations, /drop table/i);
+  assert.match(importAccountCreateOperations, /commit;\s*$/i);
 });

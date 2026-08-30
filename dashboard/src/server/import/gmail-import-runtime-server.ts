@@ -11,6 +11,10 @@ import {
   refreshImportReviewBatch,
 } from "./import-repository";
 import { buildPyeonhanDryRun, validatePyeonhanUpload } from "./pyeonhan-dry-run";
+import { executeSafeImportAutomation } from "./import-auto-execution";
+import { getImportAutomationPolicy, buildImportAccountCandidate } from "./import-automation-policy";
+import { executeRuntimeApprovedImportCreates } from "./import-action-runtime";
+import { executeRuntimePyeonhanBenefitCandidate } from "./pyeonhan-benefit-runtime";
 
 function gmailAttachmentFile(attachment: { bytes: Buffer; filename: string }) {
   return new File([new Uint8Array(attachment.bytes)], attachment.filename, {
@@ -105,4 +109,61 @@ export function runRuntimeGmailImportDryRunPoll() {
       });
     },
   });
+}
+
+export async function runRuntimeGmailImportPoll() {
+  const poll = await runRuntimeGmailImportDryRunPoll();
+  const policy = getImportAutomationPolicy();
+  const latestBatch = poll.status === "polled" ? poll.latestBatch : null;
+  const accountCreateCandidates = latestBatch?.mappingGaps?.map((gap) => (
+    buildImportAccountCandidate(gap, process.env.WHOOING_SECTION_ID ?? "")
+  )) ?? [];
+  const execution = await executeSafeImportAutomation({
+    enabled: poll.status === "polled" && policy.autoExecuteEnabled,
+    rows: latestBatch?.rows ?? [],
+    executeCreates: executeRuntimeApprovedImportCreates,
+    executeBenefit: executeRuntimePyeonhanBenefitCandidate,
+  });
+  const completedCreates = new Set(execution.completedCreateRowIds);
+  const completedBenefits = new Set(execution.completedBenefitRowIds);
+  const existingBenefits = new Set(execution.existingBenefitRowIds);
+  const responseBatch = latestBatch ? {
+    ...latestBatch,
+    rows: latestBatch.rows.map((row) => {
+      if (!row.importRowId) return row;
+      if (completedCreates.has(row.importRowId)) {
+        return { ...row, status: "created" as const, reason: "Gmail safe 자동 반영으로 등록했습니다." };
+      }
+      if (completedBenefits.has(row.importRowId)) {
+        return { ...row, cardBenefitStatus: "created" as const };
+      }
+      if (existingBenefits.has(row.importRowId)) {
+        return { ...row, cardBenefitStatus: "event_exists" as const };
+      }
+      return row;
+    }),
+    summary: {
+      ...latestBatch.summary,
+      autoCreatable: Math.max(0, latestBatch.summary.autoCreatable - completedCreates.size),
+      benefitCandidates: Math.max(
+        0,
+        latestBatch.summary.benefitCandidates - completedBenefits.size - existingBenefits.size,
+      ),
+      benefitExisting: latestBatch.summary.benefitExisting
+        + completedBenefits.size + existingBenefits.size,
+    },
+  } : null;
+  return {
+    ...poll,
+    latestBatch: responseBatch,
+    dryRunOnly: policy.dryRunOnly,
+    autoExecuteEnabled: policy.autoExecuteEnabled,
+    safeOnly: policy.safeOnly,
+    accountCreateEnabled: policy.accountCreateEnabled,
+    accountCreateRequiresApproval: policy.accountCreateRequiresApproval,
+    accountCreateCandidates,
+    createdAccounts: 0,
+    savedMappings: 0,
+    ...execution,
+  };
 }

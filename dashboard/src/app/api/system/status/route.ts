@@ -25,6 +25,10 @@ export async function GET() {
         credentialsConfigured: false,
         dryRunOnly: true,
         label: null,
+        autoExecuteEnabled: false,
+        safeOnly: false,
+        accountCreateEnabled: false,
+        accountCreateRequiresApproval: true,
       },
       importOperations: {
         supported: false,

@@ -142,6 +142,10 @@ export function getCurrentSystemStatus() {
         credentialsConfigured: ready,
         dryRunOnly: status.dryRunOnly,
         label: status.label,
+        autoExecuteEnabled: status.autoExecuteEnabled,
+        safeOnly: status.safeOnly,
+        accountCreateEnabled: status.accountCreateEnabled,
+        accountCreateRequiresApproval: status.accountCreateRequiresApproval,
       };
     },
   });

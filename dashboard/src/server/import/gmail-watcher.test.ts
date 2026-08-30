@@ -77,6 +77,10 @@ test("gmail runtime stays disabled without both enabled flag and credential file
     credentialsConfigured: false,
     dryRunOnly: true,
     label: null,
+    autoExecuteEnabled: false,
+    safeOnly: false,
+    accountCreateEnabled: false,
+    accountCreateRequiresApproval: true,
   });
   assert.equal(getGmailImportRuntimeStatus({ GMAIL_IMPORT_ENABLED: "true" }).state, "needs_credentials");
   assert.equal(getGmailImportRuntimeStatus({

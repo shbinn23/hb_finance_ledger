@@ -105,6 +105,10 @@ interface ImportRuntimeStatus {
   gmailImport: {
     state: "disabled" | "needs_credentials" | "ready";
     dryRunOnly: boolean;
+    autoExecuteEnabled: boolean;
+    safeOnly: boolean;
+    accountCreateEnabled: boolean;
+    accountCreateRequiresApproval: boolean;
   };
   importOperations: {
     supported: boolean;
@@ -127,6 +131,32 @@ interface ImportActionHistoryItem {
   whooingEntryId: number | null;
   errorMessage: string | null;
   updatedAt: string;
+}
+
+interface ImportAccountCandidate {
+  mappingType: "asset" | "expense_category" | "income_category";
+  sourceKey: string;
+  recommendedAccountType: "assets" | "expenses" | "income";
+  recommendedSectionId: string;
+  recommendedTitle: string;
+  canCreate: boolean;
+  blockedReason: string | null;
+}
+
+interface GmailPollSummary {
+  checkedMessages: number;
+  foundAttachments: number;
+  importedBatches: number;
+  reusedBatches: number;
+  createdAccounts: number;
+  savedMappings: number;
+  createdLedgerEntries: number;
+  createdTransfers: number;
+  createdBenefitEvents: number;
+  updatedEntries: number;
+  blockedReviewOnlyCount: number;
+  blockedDangerousCount: number;
+  failedCount: number;
 }
 
 const labels: Record<ImportStatus, { label: string; tone: "stable" | "watch" | "over" | "neutral" }> = {
@@ -189,6 +219,8 @@ export function ImportsPage() {
   const [selectedRowIds, setSelectedRowIds] = useState<number[]>([]);
   const [busyActionRowId, setBusyActionRowId] = useState<number | null>(null);
   const [actionHistory, setActionHistory] = useState<ImportActionHistoryItem[]>([]);
+  const [accountCandidates, setAccountCandidates] = useState<ImportAccountCandidate[]>([]);
+  const [lastPollSummary, setLastPollSummary] = useState<GmailPollSummary | null>(null);
 
   function refreshRuntimeStatus() {
     return fetch("/api/system/status", { cache: "no-store" })
@@ -210,13 +242,36 @@ export function ImportsPage() {
   }, []);
 
   async function pollGmail() {
+    if (runtimeStatus?.gmailImport.autoExecuteEnabled && !window.confirm(
+      "Gmail 첨부를 확인하고 안전 조건을 충족한 신규 거래와 확정 카드혜택을 실제 반영합니다. 수정·삭제·충돌 항목은 자동 반영하지 않습니다. 진행할까요?",
+    )) return;
     setGmailBusy(true);
     setMessage("");
     try {
       const response = await fetch("/api/imports/gmail/poll", { method: "POST" });
-      const payload = await response.json() as { message?: string; latestBatch?: DryRunResult | null };
+      const payload = await response.json() as Partial<GmailPollSummary> & {
+        message?: string;
+        latestBatch?: DryRunResult | null;
+        accountCreateCandidates?: ImportAccountCandidate[];
+      };
       setMessage(payload.message ?? "Gmail dry-run 확인을 마쳤습니다.");
       if (response.ok) {
+        setLastPollSummary({
+          checkedMessages: payload.checkedMessages ?? 0,
+          foundAttachments: payload.foundAttachments ?? 0,
+          importedBatches: payload.importedBatches ?? 0,
+          reusedBatches: payload.reusedBatches ?? 0,
+          createdAccounts: payload.createdAccounts ?? 0,
+          savedMappings: payload.savedMappings ?? 0,
+          createdLedgerEntries: payload.createdLedgerEntries ?? 0,
+          createdTransfers: payload.createdTransfers ?? 0,
+          createdBenefitEvents: payload.createdBenefitEvents ?? 0,
+          updatedEntries: payload.updatedEntries ?? 0,
+          blockedReviewOnlyCount: payload.blockedReviewOnlyCount ?? 0,
+          blockedDangerousCount: payload.blockedDangerousCount ?? 0,
+          failedCount: payload.failedCount ?? 0,
+        });
+        setAccountCandidates(payload.accountCreateCandidates ?? []);
         if (payload.latestBatch) {
           setResult(payload.latestBatch);
           setSelectedRowIds([]);
@@ -228,6 +283,65 @@ export function ImportsPage() {
       setMessage("Gmail read-only 확인 중 오류가 발생했습니다.");
     } finally {
       setGmailBusy(false);
+    }
+  }
+
+  async function createAccount(gap: DryRunResult["mappingGaps"][number]) {
+    const accountType = gap.mappingType === "asset" ? "assets"
+      : gap.mappingType === "expense_category" ? "expenses" : "income";
+    const key = `${gap.mappingType}:${gap.sourceKey}`;
+    if (!window.confirm(
+      `${gap.sourceKey}을(를) Whooing ${accountType} 계정으로 생성하고 import 매핑을 저장합니다. 실제 Whooing 계정이 생성됩니다. 진행할까요?`,
+    )) return;
+    setBusyMappingKey(key);
+    setMessage("");
+    try {
+      const response = await fetch("/api/imports/actions/create-account", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          confirmed: true,
+          mappingType: gap.mappingType,
+          sourceKey: gap.sourceKey,
+          accountType,
+          title: gap.sourceKey,
+        }),
+      });
+      const payload = await response.json() as {
+        message?: string;
+        createdAccounts?: number;
+        savedMappings?: number;
+        reevaluation?: (Partial<GmailPollSummary> & {
+          latestBatch?: DryRunResult | null;
+          accountCreateCandidates?: ImportAccountCandidate[];
+        }) | null;
+      };
+      setMessage(payload.message ?? (response.ok ? "계정 생성과 매핑을 완료했습니다." : "계정 생성에 실패했습니다."));
+      if (response.ok && payload.reevaluation?.latestBatch) {
+        setResult(payload.reevaluation.latestBatch);
+        setAccountCandidates(payload.reevaluation.accountCreateCandidates ?? []);
+        setLastPollSummary({
+          checkedMessages: payload.reevaluation.checkedMessages ?? 0,
+          foundAttachments: payload.reevaluation.foundAttachments ?? 0,
+          importedBatches: payload.reevaluation.importedBatches ?? 0,
+          reusedBatches: payload.reevaluation.reusedBatches ?? 0,
+          createdAccounts: payload.createdAccounts ?? 0,
+          savedMappings: payload.savedMappings ?? 0,
+          createdLedgerEntries: payload.reevaluation.createdLedgerEntries ?? 0,
+          createdTransfers: payload.reevaluation.createdTransfers ?? 0,
+          createdBenefitEvents: payload.reevaluation.createdBenefitEvents ?? 0,
+          updatedEntries: payload.reevaluation.updatedEntries ?? 0,
+          blockedReviewOnlyCount: payload.reevaluation.blockedReviewOnlyCount ?? 0,
+          blockedDangerousCount: payload.reevaluation.blockedDangerousCount ?? 0,
+          failedCount: payload.reevaluation.failedCount ?? 0,
+        });
+      }
+      await refreshRuntimeStatus();
+      await refreshActionHistory();
+    } catch {
+      setMessage("계정 생성 요청 중 오류가 발생했습니다.");
+    } finally {
+      setBusyMappingKey("");
     }
   }
 
@@ -457,6 +571,8 @@ export function ImportsPage() {
   ].includes(row.status)).length ?? 0;
   const dryRunOnly = runtimeStatus?.gmailImport.dryRunOnly ?? true;
   const actionExecutionSupported = result?.schema.actionExecutionSupported ?? false;
+  const autoExecuteEnabled = runtimeStatus?.gmailImport.autoExecuteEnabled ?? false;
+  const accountCreateEnabled = runtimeStatus?.gmailImport.accountCreateEnabled ?? false;
 
   return (
     <>
@@ -492,20 +608,31 @@ export function ImportsPage() {
           </div>
           <div className="import-upload-row">
             <div>
-              <p className="metric-detail">Gmail 자동 감지: {gmailLabel} · {runtimeStatus?.gmailImport.dryRunOnly ?? true ? "dry-run only" : "write 허용"}.</p>
-              <p className="metric-detail">메일과 첨부를 읽기만 하며 후잉 원장은 변경하지 않습니다. 5MB 이하 편한가계부 .xlsx 파일을 사용하세요.</p>
+              <p className="metric-detail">Gmail 자동 감지: {gmailLabel} · {dryRunOnly ? "dry-run only" : autoExecuteEnabled ? "safe 자동 반영" : "수동 승인 write"}.</p>
+              <p className="metric-detail">Gmail은 읽기 전용입니다. safe 자동 반영은 신규 확정 거래와 rule 확정 혜택만 실행하며 수정·삭제·충돌은 검토로 남깁니다.</p>
             </div>
             <Button
               variant="secondary"
               disabled={gmailBusy || gmailState !== "ready"}
               onClick={pollGmail}
             >
-              <MailSearch size={15} />{gmailBusy ? "확인 중" : "Gmail dry-run 확인"}
+              <MailSearch size={15} />{gmailBusy ? "처리 중" : autoExecuteEnabled ? "Gmail 가져오기 실행" : "Gmail dry-run 확인"}
             </Button>
           </div>
           <p className="metric-detail">최근 import batch: {runtimeStatus?.importOperations.latestBatchId
             ? `#${runtimeStatus.importOperations.latestBatchId} · ${runtimeStatus.importOperations.latestBatchStatus} · ${runtimeStatus.importOperations.latestFilename ?? "파일명 없음"} · 해시 ${runtimeStatus.importOperations.sourceFileHash?.slice(0, 8) ?? "-"}… · 정규화 ${runtimeStatus.importOperations.normalizedCount}건 · 검토 필요 ${runtimeStatus.importOperations.reviewRequiredCount}건 · 승인 후보 ${runtimeStatus.importOperations.benefitApprovalCandidateCount}건 · 기존 event ${runtimeStatus.importOperations.benefitEventExistsCount}건`
             : "없음"}</p>
+          {lastPollSummary ? (
+            <div className="import-integrity-strip" aria-label="최근 Gmail poll 결과">
+              <span>메일/첨부 <strong>{lastPollSummary.checkedMessages}/{lastPollSummary.foundAttachments}</strong></span>
+              <span>신규/재사용 batch <strong>{lastPollSummary.importedBatches}/{lastPollSummary.reusedBatches}</strong></span>
+              <span>원장/이체 <strong>{lastPollSummary.createdLedgerEntries}/{lastPollSummary.createdTransfers}</strong></span>
+              <span>혜택/수정 <strong>{lastPollSummary.createdBenefitEvents}/{lastPollSummary.updatedEntries}</strong></span>
+              <span>계정/매핑 <strong>{lastPollSummary.createdAccounts}/{lastPollSummary.savedMappings}</strong></span>
+              <span>검토/위험 차단 <strong>{lastPollSummary.blockedReviewOnlyCount}/{lastPollSummary.blockedDangerousCount}</strong></span>
+              <span>실패 <strong>{lastPollSummary.failedCount}</strong></span>
+            </div>
+          ) : null}
           {message ? <p className="import-feedback" role="status">{message}</p> : null}
         </CardContent>
       </Card>
@@ -522,6 +649,7 @@ export function ImportsPage() {
               ["환급·캐시백 검토", refundReviewCount],
               ["자동등록 가능", result.summary.autoCreatable],
               ["dry-run-only", (runtimeStatus?.gmailImport.dryRunOnly ?? true) ? "ON" : "OFF"],
+              ["safe 자동 반영", autoExecuteEnabled ? "ON" : "OFF"],
             ].map(([label, value]) => (
               <Card key={String(label)} className="import-summary-card">
                 <CardDescription>{label}</CardDescription><strong>{value}</strong>
@@ -542,7 +670,7 @@ export function ImportsPage() {
           ) : null}
           <div className="import-warning import-policy-note">
             <AlertTriangle size={17} />
-            <p>자동 삭제와 신규 계정 자동 생성은 지원하지 않습니다. 수정 후보는 단건 승인 후 반영하고 삭제 후보는 review-only입니다. 환급/캐시백은 수입, 지출 환급, 카드 할인 중 의미가 섞일 수 있어 자동 처리하지 않습니다. 수입 의미가 섞여 있어 수동 정책 필요 상태입니다. 민생지원쿠폰 차액조정은 balance adjustment 또는 별도 지원금 처리 정책 확정 전까지 review-only입니다.</p>
+            <p>자동 삭제는 지원하지 않습니다. 새 계정은 명확한 후보를 사용자가 승인한 경우에만 생성합니다. 수정 후보는 단건 승인, 삭제·충돌·환급·캐시백·민생지원쿠폰은 review-only입니다.</p>
           </div>
 
           {result.summary.benefitCandidates === 0
@@ -632,9 +760,16 @@ export function ImportsPage() {
               <CardContent><div className="import-mapping-list">
                 {result.mappingGaps.map((gap) => (
                   <div key={`${gap.mappingType}-${gap.sourceKey}`}>
+                    {(() => {
+                      const candidate = accountCandidates.find((item) => (
+                        item.mappingType === gap.mappingType && item.sourceKey === gap.sourceKey
+                      ));
+                      const recommendedType = candidate?.recommendedAccountType
+                        ?? (gap.mappingType === "asset" ? "assets" : gap.mappingType === "expense_category" ? "expenses" : "income");
+                      return <>
                     <Badge tone="watch">{gap.mappingType}</Badge>
                     <strong>{gap.sourceKey}</strong>
-                    <span>{gap.count}건 · {won(gap.amountTotal)} · {gap.entryTypes.join(", ")}</span>
+                    <span>{gap.count}건 · {won(gap.amountTotal)} · {gap.entryTypes.join(", ")} · 추천 {recommendedType} · section {candidate?.recommendedSectionId ?? "확인 필요"} · 이름 {candidate?.recommendedTitle ?? gap.sourceKey}</span>
                     <div className="import-mapping-actions">
                       {gap.suggestions.length > 0 ? gap.suggestions.map((suggestion) => (
                         <Button
@@ -646,8 +781,17 @@ export function ImportsPage() {
                         >
                           {suggestion.sourceKey}에 매핑
                         </Button>
-                      )) : <span>계정 생성 필요 또는 수동 매핑 필요</span>}
+                      )) : <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busyMappingKey === `${gap.mappingType}:${gap.sourceKey}` || !accountCreateEnabled || dryRunOnly || candidate?.canCreate === false || /(?:신용|체크)?카드|credit/i.test(gap.sourceKey)}
+                        onClick={() => createAccount(gap)}
+                      >
+                        {/(?:신용|체크)?카드|credit/i.test(gap.sourceKey) ? "카드 계정 수동 설정 필요" : accountCreateEnabled ? "새 계정 생성 승인" : "계정 생성 비활성"}
+                      </Button>}
                     </div>
+                    </>;
+                    })()}
                   </div>
                 ))}
               </div></CardContent>

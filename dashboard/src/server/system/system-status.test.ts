@@ -82,6 +82,10 @@ test("getSystemStatus keeps ETL and mirror state independent", async () => {
       credentialsConfigured: false,
       dryRunOnly: true,
       label: null,
+      autoExecuteEnabled: false,
+      safeOnly: false,
+      accountCreateEnabled: false,
+      accountCreateRequiresApproval: true,
     },
     importOperations: {
       supported: true,
@@ -139,6 +143,10 @@ test("getSystemStatus awaits a safely classified Gmail credential state", async 
       credentialsConfigured: false,
       dryRunOnly: true,
       label: "personal-gmail",
+      autoExecuteEnabled: false,
+      safeOnly: false,
+      accountCreateEnabled: false,
+      accountCreateRequiresApproval: true,
     }),
   }));
 

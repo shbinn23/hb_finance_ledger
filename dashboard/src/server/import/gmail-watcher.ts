@@ -32,6 +32,10 @@ export interface GmailImportRuntimeStatus {
   credentialsConfigured: boolean;
   dryRunOnly: boolean;
   label: string | null;
+  autoExecuteEnabled: boolean;
+  safeOnly: boolean;
+  accountCreateEnabled: boolean;
+  accountCreateRequiresApproval: boolean;
 }
 
 export function buildGmailImportQuery(env: GmailImportEnv = process.env) {
@@ -57,14 +61,22 @@ export function getGmailImportRuntimeStatus(
     && env.GMAIL_OAUTH_REFRESH_TOKEN,
   );
   const credentialsConfigured = inferCredentials && (credentialFiles || explicitOAuth);
+  const dryRunOnly = env[GMAIL_IMPORT_DRY_RUN_ONLY_ENV]?.toLowerCase() !== "false";
+  const safeOnly = env.GMAIL_IMPORT_AUTO_EXECUTE_SAFE_ONLY?.toLowerCase() === "true";
   return {
     enabled,
     state: !enabled ? "disabled" : credentialsConfigured ? "ready" : "needs_credentials",
     query: buildGmailImportQuery(env),
     pollIntervalMs: gmailPollInterval(env),
     credentialsConfigured,
-    dryRunOnly: env[GMAIL_IMPORT_DRY_RUN_ONLY_ENV]?.toLowerCase() !== "false",
+    dryRunOnly,
     label: env[GMAIL_IMPORT_LABEL_ENV]?.trim() || null,
+    autoExecuteEnabled: !dryRunOnly
+      && safeOnly
+      && env.GMAIL_IMPORT_AUTO_EXECUTE_ENABLED?.toLowerCase() === "true",
+    safeOnly,
+    accountCreateEnabled: env.GMAIL_IMPORT_ACCOUNT_CREATE_ENABLED?.toLowerCase() === "true",
+    accountCreateRequiresApproval: true,
   };
 }
 

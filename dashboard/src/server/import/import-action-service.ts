@@ -32,6 +32,7 @@ export interface ImportActionOperation {
   status: "pending" | "created" | "failed";
   whooingEntryId: number | null;
   errorMessage: string | null;
+  whooingAccountId?: string | null;
 }
 
 export interface ImportActionDependencies {

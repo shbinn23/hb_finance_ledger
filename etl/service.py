@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from etl import sync_whooing
+from etl.refresh_whooing_accounts import refresh_accounts
 
 app = FastAPI(title="HB Finance Ledger ETL")
 
@@ -28,6 +29,13 @@ class WhooingSyncResponse(BaseModel):
     deleted: int
 
 
+class WhooingAccountSyncResponse(BaseModel):
+    ok: bool
+    fetched: int
+    upserted: int
+    skipped: int
+
+
 @app.get("/health")
 def health() -> dict[str, bool]:
     return {"ok": True}
@@ -47,3 +55,12 @@ def sync_whooing_entries(request: WhooingSyncRequest) -> dict[str, Any]:
         "ok": True,
         **result,
     }
+
+
+@app.post("/sync/whooing-accounts", response_model=WhooingAccountSyncResponse)
+def sync_whooing_accounts() -> dict[str, Any]:
+    try:
+        result = refresh_accounts(apply=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Whooing account sync failed") from exc
+    return {"ok": True, **result}

@@ -5,8 +5,8 @@ import test from "node:test";
 
 const source = readFileSync(resolve(import.meta.dirname, "route.ts"), "utf8");
 
-test("Gmail poll route invokes only the dry-run import runtime", () => {
-  assert.match(source, /runRuntimeGmailImportDryRunPoll/);
+test("Gmail poll route invokes the guarded import runtime", () => {
+  assert.match(source, /runRuntimeGmailImportPoll/);
   assert.doesNotMatch(source, /createRuntimeDashboardLedgerEntry/);
   assert.doesNotMatch(source, /applyAutoCreatableRows/);
   assert.doesNotMatch(source, /createCardBenefitEvent/);

@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { approveRuntimePyeonhanBenefitCandidate } from "@/server/import/pyeonhan-benefit-runtime";
+import { executeRuntimePyeonhanBenefitCandidate } from "@/server/import/pyeonhan-benefit-runtime";
 import {
   importActionOriginIsAllowed,
   importWritesAreDryRunOnly,
   parseImportBenefitRequest,
 } from "@/server/import/import-actions";
-import {
-  finishImportOperationRecord,
-  getImportActionOperation,
-  getImportSchemaStatus,
-  reserveImportActionOperation,
-} from "@/server/import/import-repository";
+import { getImportSchemaStatus } from "@/server/import/import-repository";
 
 export const runtime = "nodejs";
 
@@ -36,24 +31,6 @@ export async function POST(request: NextRequest) {
   if (!(await getImportSchemaStatus()).actionExecutionSupported) {
     return NextResponse.json({ ok: false, error: "import_action_schema_unavailable" }, { status: 503 });
   }
-  const operationKey = `pyeonhan-benefit:${parsed.value.importRowId}:${parsed.value.ruleId}`;
-  const existing = await getImportActionOperation(operationKey);
-  if (existing?.status === "created") {
-    return NextResponse.json({ ok: true, status: "event_exists", operationKey, message: "이미 처리된 카드혜택 승인입니다." });
-  }
-  const reserved = await reserveImportActionOperation({
-    rowId: parsed.value.importRowId,
-    operationType: "benefit",
-    operationKey,
-  });
-  if (!reserved) {
-    return NextResponse.json({ ok: false, error: "benefit_operation_pending" }, { status: 409 });
-  }
-  const result = await approveRuntimePyeonhanBenefitCandidate(parsed.value);
-  await finishImportOperationRecord({
-    operationKey,
-    status: result.ok ? "created" : "failed",
-    errorMessage: result.ok ? null : result.message,
-  });
-  return NextResponse.json({ ...result, operationKey }, { status: result.status === "rejected" ? 400 : result.status === "failed" ? 500 : 200 });
+  const result = await executeRuntimePyeonhanBenefitCandidate(parsed.value);
+  return NextResponse.json(result, { status: result.status === "rejected" ? 400 : result.status === "failed" ? 500 : 200 });
 }

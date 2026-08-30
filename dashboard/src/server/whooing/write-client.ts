@@ -2,11 +2,23 @@ import type { WhooingEntryPayload } from "@/server/ledger/ledger-entry-payload";
 
 const WHOOING_API_BASE_URL = "https://whooing.com/api";
 
-interface WhooingApiResponse {
+export interface WhooingApiResponse {
   code?: number;
   message?: string;
   error_parameters?: unknown;
   results?: unknown;
+}
+
+export type WhooingCreatableAccountType = "assets" | "liabilities" | "expenses" | "income";
+
+export interface WhooingAccountCreatePayload {
+  section_id: string;
+  title: string;
+  type: "account";
+  open_date: string;
+  close_date: string;
+  memo: string;
+  category: "normal";
 }
 
 export class WhooingWriteClientError extends Error {
@@ -52,6 +64,12 @@ function formBody(payload: WhooingEntryPayload) {
   Object.entries(payload).forEach(([key, value]) => {
     params.set(key, String(value));
   });
+  return params;
+}
+
+function genericFormBody(payload: object) {
+  const params = new URLSearchParams();
+  Object.entries(payload).forEach(([key, value]) => params.set(key, String(value)));
   return params;
 }
 
@@ -105,4 +123,39 @@ export async function updateWhooingEntry(
     throw new WhooingWriteClientError(safeApiError(data, "update"));
   }
   return data;
+}
+
+export async function createWhooingAccount(
+  accountType: WhooingCreatableAccountType,
+  payload: WhooingAccountCreatePayload,
+): Promise<WhooingApiResponse> {
+  const response = await fetch(`${WHOOING_API_BASE_URL}/accounts/${accountType}.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-API-KEY": whooingApiKey(),
+    },
+    body: genericFormBody(payload),
+  });
+  if (!response.ok) {
+    throw new WhooingWriteClientError("Whooing account creation request failed", response.status);
+  }
+  const data = await response.json() as WhooingApiResponse;
+  if (data.code !== undefined && data.code !== 200) {
+    throw new WhooingWriteClientError("Whooing API rejected account creation");
+  }
+  return data;
+}
+
+export function extractWhooingAccountId(response: WhooingApiResponse) {
+  const results = response.results;
+  const accountId = results && typeof results === "object"
+    ? (results as Record<string, unknown>).account_id
+      ?? (results as Record<string, unknown>).accountId
+      ?? (results as Record<string, unknown>).id
+    : null;
+  if (typeof accountId !== "string" || !accountId.trim()) {
+    throw new WhooingWriteClientError("Whooing account creation response did not include an account id");
+  }
+  return accountId.trim();
 }

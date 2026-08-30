@@ -34,6 +34,17 @@ test("account creation route only returns a preview and never calls Whooing writ
   assert.doesNotMatch(preview, /createWhooing|updateWhooing|fetch\(/);
 });
 
+test("approved account creation route is origin, policy, schema, and confirmation guarded", () => {
+  const createAccount = readFileSync(resolve(app, "actions/create-account/route.ts"), "utf8");
+  assert.match(createAccount, /importActionOriginIsAllowed/);
+  assert.match(createAccount, /parseImportAccountCreateRequest/);
+  assert.match(createAccount, /accountCreateEnabled/);
+  assert.match(createAccount, /importAccountCreateSchemaAvailable/);
+  assert.match(createAccount, /createRuntimeApprovedImportAccount/);
+  assert.match(createAccount, /createdAccounts/);
+  assert.match(createAccount, /savedMappings/);
+});
+
 test("mapping and benefit mutations share origin, confirmation, and operation safeguards", () => {
   const mapping = readFileSync(resolve(app, "account-mappings/route.ts"), "utf8");
   const benefit = readFileSync(resolve(app, "benefit-events/route.ts"), "utf8");
@@ -43,5 +54,5 @@ test("mapping and benefit mutations share origin, confirmation, and operation sa
   assert.match(benefit, /importActionOriginIsAllowed/);
   assert.match(benefit, /parseImportBenefitRequest/);
   assert.match(benefit, /importWritesAreDryRunOnly/);
-  assert.match(benefit, /reserveImportActionOperation/);
+  assert.match(benefit, /executeRuntimePyeonhanBenefitCandidate/);
 });

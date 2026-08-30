@@ -110,6 +110,31 @@ export function parseImportMappingRequest(value: unknown): ParseResult<{
   };
 }
 
+export function parseImportAccountCreateRequest(value: unknown): ParseResult<{
+  mappingType: ImportMapping["mappingType"];
+  sourceKey: string;
+  accountType: "assets" | "liabilities" | "expenses" | "income";
+  title: string;
+  confirmed: true;
+}> {
+  if (!value || typeof value !== "object") return { ok: false, error: "invalid_request" };
+  const input = value as Record<string, unknown>;
+  if (input.confirmed !== true) return { ok: false, error: "account_create_confirmation_required" };
+  const mappingType = String(input.mappingType ?? "") as ImportMapping["mappingType"];
+  const sourceKey = typeof input.sourceKey === "string" ? input.sourceKey.trim() : "";
+  const accountType = String(input.accountType ?? "") as "assets" | "liabilities" | "expenses" | "income";
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const validCombination = mappingType === "asset"
+    ? ["assets", "liabilities"].includes(accountType)
+    : mappingType === "expense_category"
+      ? accountType === "expenses"
+      : mappingType === "income_category" && accountType === "income";
+  if (!sourceKey || !title || title.length > 30 || !validCombination) {
+    return { ok: false, error: "invalid_account_create_candidate" };
+  }
+  return { ok: true, value: { mappingType, sourceKey, accountType, title, confirmed: true } };
+}
+
 export function parseImportRowActionRequest(value: unknown): ParseResult<{ importRowId: number }> {
   if (!value || typeof value !== "object") return { ok: false, error: "invalid_request" };
   const importRowId = Number((value as Record<string, unknown>).importRowId);

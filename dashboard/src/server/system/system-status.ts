@@ -30,12 +30,20 @@ export interface SystemStatusDependencies {
     credentialsConfigured: boolean;
     dryRunOnly: boolean;
     label: string | null;
+    autoExecuteEnabled: boolean;
+    safeOnly: boolean;
+    accountCreateEnabled: boolean;
+    accountCreateRequiresApproval: boolean;
   }> | {
     enabled: boolean;
     state: "disabled" | "needs_credentials" | "ready";
     credentialsConfigured: boolean;
     dryRunOnly: boolean;
     label: string | null;
+    autoExecuteEnabled: boolean;
+    safeOnly: boolean;
+    accountCreateEnabled: boolean;
+    accountCreateRequiresApproval: boolean;
   };
 }
 
@@ -122,6 +130,10 @@ export async function getSystemStatus(
       credentialsConfigured: false,
       dryRunOnly: true,
       label: null,
+      autoExecuteEnabled: false,
+      safeOnly: false,
+      accountCreateEnabled: false,
+      accountCreateRequiresApproval: true,
     }),
   ]);
 

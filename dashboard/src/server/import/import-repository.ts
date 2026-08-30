@@ -9,6 +9,7 @@ import type {
 } from "./pyeonhan-reconciliation.ts";
 import type { BenefitApprovalCandidate } from "./pyeonhan-benefit-approval.ts";
 import type { ImportActionOperation, ImportActionRow } from "./import-action-service.ts";
+import { buildImportAccountCandidate, type ImportMappingType } from "./import-automation-policy.ts";
 import type {
   ImportBatchStatus,
   PersistedImportBatchStatus,
@@ -72,6 +73,21 @@ export async function getImportSchemaStatus(): Promise<ImportSchemaStatus> {
     autoApplySupported: importTablesAvailable && ledgerOperationsAvailable,
     actionExecutionSupported: importTablesAvailable && ledgerOperationsAvailable && actionExecutionSupported,
   };
+}
+
+export async function importAccountCreateSchemaAvailable() {
+  const result = await query<{ available: boolean }>(
+    `
+    select exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'app'
+        and table_name = 'import_write_operations'
+        and column_name = 'whooing_account_id'
+    ) as available
+    `,
+  );
+  return result.rows[0]?.available ?? false;
 }
 
 export async function getImportMappings(): Promise<ImportMapping[]> {
@@ -911,9 +927,15 @@ export async function getImportActionOperation(operationKey: string): Promise<Im
     status: ImportActionOperation["status"];
     whooing_entry_id: string | null;
     error_message: string | null;
+    whooing_account_id: string | null;
   }>(
     `
-    select operation_key, status, whooing_entry_id::text, error_message
+    select operation_key, status, whooing_entry_id::text, error_message,
+           case when exists (
+             select 1 from information_schema.columns
+             where table_schema = 'app' and table_name = 'import_write_operations'
+               and column_name = 'whooing_account_id'
+           ) then (to_jsonb(import_write_operations) ->> 'whooing_account_id') else null end as whooing_account_id
     from app.import_write_operations
     where operation_key = $1
     `,
@@ -925,7 +947,69 @@ export async function getImportActionOperation(operationKey: string): Promise<Im
     status: row.status,
     whooingEntryId: row.whooing_entry_id === null ? null : Number(row.whooing_entry_id),
     errorMessage: row.error_message,
+    whooingAccountId: row.whooing_account_id,
   } : null;
+}
+
+export async function getLatestImportAccountCandidate(mappingType: ImportMappingType, sourceKey: string) {
+  const result = await query<{
+    count: string;
+    amount_total: string;
+    entry_types: string[];
+    open_date: string;
+  }>(
+    `
+    select count(*)::text as count,
+           coalesce(sum(r.posting_amount), 0)::text as amount_total,
+           array_agg(distinct r.entry_type order by r.entry_type) as entry_types,
+           to_char(min(r.occurred_date), 'YYYYMMDD') as open_date
+    from app.import_rows r
+    where r.batch_id = (select max(id) from app.import_batches)
+      and r.status = 'mapping_required'
+      and not exists (
+        select 1 from app.import_mappings m
+        where m.source = 'pyeonhan_excel' and m.mapping_type = $1
+          and lower(btrim(m.source_key)) = lower(btrim($2)) and m.is_active
+      )
+      and (
+        ($1 = 'asset' and (lower(btrim(r.source_asset_name)) = lower(btrim($2))
+          or lower(btrim(coalesce(r.counterparty_asset_name, ''))) = lower(btrim($2))))
+        or ($1 = 'expense_category' and r.entry_type = 'expense'
+          and lower(btrim(concat_ws(' / ', nullif(r.source_category_name, ''), nullif(r.source_subcategory_name, '')))) = lower(btrim($2)))
+        or ($1 = 'income_category' and r.entry_type = 'income'
+          and lower(btrim(concat_ws(' / ', nullif(r.source_category_name, ''), nullif(r.source_subcategory_name, '')))) = lower(btrim($2)))
+      )
+    `,
+    [mappingType, sourceKey],
+  );
+  const row = result.rows[0];
+  if (!row || Number(row.count) === 0 || !row.open_date) return null;
+  return {
+    ...buildImportAccountCandidate({
+      mappingType,
+      sourceKey,
+      count: Number(row.count),
+      amountTotal: Number(row.amount_total),
+      entryTypes: row.entry_types,
+    }, sectionId),
+    openDate: row.open_date,
+  };
+}
+
+export async function findExactWhooingAccount(accountType: string, title: string) {
+  const result = await query<{ account_id: string; account_type: string }>(
+    `
+    select account_id, account_type
+    from whooing.accounts
+    where section_id = $1 and account_type = $2 and item_type = 'account'
+      and lower(regexp_replace(title, '\\s+', '', 'g'))
+        = lower(regexp_replace($3, '\\s+', '', 'g'))
+    limit 1
+    `,
+    [sectionId, accountType, title],
+  );
+  const row = result.rows[0];
+  return row ? { accountId: row.account_id, accountType: row.account_type } : null;
 }
 
 export async function reserveImportActionOperation(input: {
@@ -986,6 +1070,51 @@ export async function reserveImportMappingOperation(input: {
     [input.operationKey, input.mappingType, input.sourceKey],
   );
   return result.rowCount === 1;
+}
+
+export async function reserveImportAccountCreateOperation(input: {
+  mappingType: ImportMappingType;
+  sourceKey: string;
+  operationKey: string;
+}) {
+  const result = await query(
+    `
+    with retried as (
+      update app.import_write_operations
+      set status = 'pending', error_message = null, updated_at = now()
+      where operation_key = $1 and status = 'failed'
+      returning id
+    ), inserted as (
+      insert into app.import_write_operations (
+        row_id, operation_type, operation_key, status, mapping_type, source_key
+      )
+      select null, 'account_create', $1, 'pending', $2, $3
+      where not exists (select 1 from retried)
+      on conflict do nothing
+      returning id
+    )
+    select id from retried union all select id from inserted
+    `,
+    [input.operationKey, input.mappingType, input.sourceKey],
+  );
+  return result.rowCount === 1;
+}
+
+export async function finishImportAccountCreateOperation(input: {
+  operationKey: string;
+  status: "created" | "failed";
+  whooingAccountId: string | null;
+  errorMessage: string | null;
+}) {
+  await query(
+    `
+    update app.import_write_operations
+    set status = $2, whooing_account_id = coalesce($3, whooing_account_id),
+        error_message = $4, updated_at = now()
+    where operation_key = $1
+    `,
+    [input.operationKey, input.status, input.whooingAccountId, input.errorMessage],
+  );
 }
 
 export async function finishImportOperationRecord(input: {
