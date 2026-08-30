@@ -132,32 +132,44 @@ Supported entry types are expense, income, transfer, card payment, and balance a
 the current `whooing.entries` mirror and prior import snapshots. Results are separated into automatic
 create candidates, duplicates, mapping gaps, update candidates, delete candidates, conflicts, and
 review-required rows. Updates and deletes are never applied automatically. All discounted rows remain
-review-only; exact card-benefit candidates are displayed as operator evidence and are not written yet.
+review-only until an operator stores a review batch and explicitly approves an exact card-benefit candidate.
+Approval creates only `app.card_benefit_events`; it never modifies the Whooing ledger. Approval amount,
+posting amount, applied discount, and performance amount are stored separately and revalidated against
+the mirror and active rule.
 
-Automatic creation requires both `migrations/004_create_ledger_write_operations.sql` and
-`migrations/005_create_pyeonhan_import_tables.sql`. Without those migrations, `/imports` provides
-read-only dry-run comparison only. Eligible creates use deterministic operation keys through the shared
+Automatic creation requires `migrations/004_create_ledger_write_operations.sql` and
+`migrations/005_create_pyeonhan_import_tables.sql`. Card-benefit review approval additionally requires
+`migrations/007_add_import_benefit_review.sql`. Without the relevant migrations, `/imports` keeps the
+unsupported write action disabled. Eligible creates use deterministic operation keys through the shared
 ledger write service; Whooing remains the source of truth and local sync remains best-effort.
 
-### Gmail watcher skeleton
+### Gmail import runtime boundary
 
-Gmail OAuth and network polling are not implemented yet. The current adapter boundary creates a stable
+Gmail OAuth and network polling are intentionally not bundled yet. The runtime boundary creates a stable
 identity from Gmail message and attachment IDs, checks the attachment SHA-256 against prior imports,
-then hands new attachment bytes to the import
-pipeline. A future runtime adapter will use:
+then hands new attachment bytes to the import pipeline. Without explicit enablement and credentials,
+system status reports the watcher as disabled or needing credentials and performs no network request.
 
-- `PYEONHAN_GMAIL_QUERY`: Gmail query selecting Pyeonhan Ledger export messages. The suggested default is
+- `GMAIL_IMPORT_ENABLED`: must be `true` before a future runtime may poll.
+- `GMAIL_IMPORT_QUERY`: Gmail query selecting Pyeonhan Ledger export messages. The suggested default is
   `has:attachment filename:xlsx subject:(편한가계부 OR 가계부)`.
-- `PYEONHAN_GMAIL_POLL_INTERVAL_MS`: polling interval in milliseconds. The suggested default is 300000.
+- `GMAIL_IMPORT_POLL_INTERVAL_MS`: polling interval in milliseconds; values below 60000 fall back to 300000.
+- `GMAIL_CREDENTIALS_FILE` and `GMAIL_TOKEN_FILE`: preferred mounted OAuth credential/token paths.
+- `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`: optional client-value alternative; never commit real values.
 
 Before enabling polling, configure Google OAuth with the minimum `gmail.readonly` scope, durable
 processed-attachment identity storage, source-file hash lookup, attachment size limits, and retry policy.
 The watcher must never delete or mutate Gmail messages. Never commit Gmail
 credentials or tokens.
 
+Refund/cashback rows and 민생지원쿠폰 difference adjustments always remain review-only. Cashback needs
+an explicit choice between income, expense reversal, or card-benefit treatment. Support-coupon differences
+need an explicit balance-adjustment or support-income policy. Update and delete candidates are detected but
+never applied automatically.
+
 ### Import migration verification
 
-Apply migrations `004` and `005` only after reviewing the target database. After applying them,
+Apply migrations `004`, `005`, and `007` only after reviewing the target database. After applying them,
 verify the created objects, columns, and constraints with read-only queries:
 
 ```sql
