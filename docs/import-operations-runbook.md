@@ -140,7 +140,7 @@ serialized before the existing review batch is reused.
 - Refund/cashback rows can mean income, expense reversal, or card benefit. They are never automatic.
 - 민생지원쿠폰 difference adjustments remain review-only until a balance-adjustment or support-income
   policy is explicitly chosen.
-- Update and delete candidates are never automatically applied.
+- Update candidates require a separate single-row confirmation. Delete candidates remain review-only.
 
 ## Practical monthly snapshot validation
 
@@ -151,7 +151,9 @@ export as a new Gmail attachment, then run `Gmail dry-run 확인` once.
 - **Existing expense modification:** an unchanged source identity with a changed content hash is
   `possible_update`. When date, asset, or amount changes the identity, reconciliation links it only when
   the missing previous row and new row form an unambiguous one-to-one revision. `/imports` shows the
-  previous snapshot and current values plus mirror evidence. No field is updated automatically.
+  previous snapshot and current values plus mirror evidence. A confirmed single-row action rebuilds the
+  full Whooing payload from persisted server evidence and uses `PUT entries/:entry_id.json`; it is never
+  updated automatically from browser-supplied financial fields.
 - **New asset:** an unknown source asset is `mapping_required`. The page shows affected rows, total
   posting amount, and conservative suggestions from existing Whooing accounts. Saving a confirmed
   mapping changes only `app.import_mappings`. New Whooing account creation is preview-only and must be
@@ -164,8 +166,7 @@ export as a new Gmail attachment, then run `Gmail dry-run 확인` once.
   `GMAIL_IMPORT_DRY_RUN_ONLY=true`, both the UI and server reject the Whooing create action.
 
 Automatic deletion is prohibited. A missing prior row is shown as `possible_delete` for review only.
-Refund, cashback, support coupon, uncertain card benefit, update, and delete rows never enter automatic
-creation.
+Refund, cashback, support coupon, uncertain card benefit, and delete rows never enter automatic creation.
 
 Before disabling dry-run-only, verify ETL is online, the mirror is fresh, mappings are correct, every
 candidate payload is reviewed, and the latest export produces no unexplained conflict. Enable at most one
@@ -178,7 +179,29 @@ explicitly approved write and verify its operation key and mirror result before 
 - 신한 레이디 lunch rows must satisfy approval minus floor(5%) equals posting.
 - MG+S simple-pay rows use the configured rule rate; MG+S subscription rows use their separate 50% rule.
 - `auto_creatable` remains disabled operationally while Gmail is dry-run-only.
-- Refund/cashback, 민생지원쿠폰 differences, updates, and deletes remain review-only.
+- Refund/cashback, 민생지원쿠폰 differences, and deletes remain review-only.
+
+## Supervised approval rollout
+
+1. Apply migrations through `008_expand_import_action_operations.sql` in order after taking a database
+   backup. Until migration 008 is present, `/imports` must report action execution as unavailable and keep
+   mutation controls disabled.
+2. Keep `GMAIL_IMPORT_DRY_RUN_ONLY=true`, poll or upload one workbook, save its review batch, resolve only
+   mappings to existing accounts, and rerun reconciliation.
+3. Inspect the persisted row ID, source evidence, mappings, matched mirror entry, approval/posting/discount
+   amounts, and proposed action. Automatic account creation and deletion are unsupported.
+4. Set `GMAIL_IMPORT_DRY_RUN_ONLY=false` only for a supervised window and restart dashboard. Gmail polling
+   remains read-only; the flag enables only explicitly confirmed create, update, and benefit actions.
+5. Select exactly one `auto_creatable` row and confirm registration. For `possible_update`, approve exactly
+   one row after checking the displayed before/after evidence. Benefit approval likewise requires one
+   matched row, one rule, and no existing event.
+6. Verify the operation history, deterministic operation key, returned Whooing entry ID, and local mirror.
+   Repeat the same approval once only to verify reuse/duplicate blocking before expanding beyond one row.
+7. Re-enable `GMAIL_IMPORT_DRY_RUN_ONLY=true` and restart dashboard when the supervised window ends.
+
+Create, update, benefit, mapping, skip, and review actions are recorded in
+`app.import_write_operations`. The retired `/api/imports/pyeonhan/apply` bulk endpoint returns HTTP 410;
+operators must use persisted row approvals from `/imports`.
 
 ## Before any live operation
 
@@ -190,7 +213,7 @@ explicitly approved write and verify its operation key and mirror result before 
    continuing.
 
 Gmail poll itself is not a live Whooing operation. It may write only `app.import_batches` and
-`app.import_rows` review metadata. Do not call `/api/imports/pyeonhan/apply` during Gmail readiness checks.
+`app.import_rows` review metadata. The legacy bulk apply endpoint is retired; do not use it.
 
 ## Common issues
 
@@ -204,7 +227,9 @@ Gmail poll itself is not a live Whooing operation. It may write only `app.import
 
 ## Rollback
 
-Disable Gmail import and restart only the affected runtime. The read-only watcher must not mutate Gmail.
+Immediately set `GMAIL_IMPORT_DRY_RUN_ONLY=true` and restart dashboard to stop further create, update, and
+benefit approvals. Disable Gmail import separately only when mailbox polling must also stop. The read-only
+watcher must not mutate Gmail.
 For database-backed import actions, retain batch and operation rows as an audit trail; do not delete them
 to simulate rollback. Correct the source or mapping, then rerun dry-run reconciliation before any further
 write.
