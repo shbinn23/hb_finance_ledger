@@ -23,6 +23,17 @@ export async function GET() {
         enabled: false,
         state: "disabled",
         credentialsConfigured: false,
+        dryRunOnly: true,
+        label: null,
+      },
+      importOperations: {
+        supported: false,
+        latestBatchId: null,
+        latestBatchStatus: null,
+        sourceFileHash: null,
+        reviewRequiredCount: 0,
+        benefitApprovalCandidateCount: 0,
+        benefitEventExistsCount: 0,
       },
     });
   }

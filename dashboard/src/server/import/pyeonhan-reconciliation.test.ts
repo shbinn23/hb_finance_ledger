@@ -235,6 +235,11 @@ test("reconciliation distinguishes matched, uncertain, and existing benefit even
     item: "아워홈",
     memo: "점심",
     amount: 7315,
+    benefitEventId: "event-exact",
+    benefitEventApprovalAmount: 7700,
+    benefitEventPerformanceAmount: 7700,
+    benefitEventPostingAmount: 7315,
+    benefitEventDiscountAmount: 385,
   });
   const result = reconcilePyeonhanTransactions({
     transactions: [exact, uncertain],
@@ -243,14 +248,80 @@ test("reconciliation distinguishes matched, uncertain, and existing benefit even
       { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
       { mappingType: "expense_category", sourceKey: "필수 / 식비", accountType: "expenses", accountId: "x61", confidence: 1 },
     ],
-    mirrorEntries: [exactMirror, mirror({ entryId: 1428002, benefitEventId: "event-1" })],
+    mirrorEntries: [exactMirror, mirror({
+      entryId: 1428002,
+      benefitEventId: "event-1",
+      benefitEventApprovalAmount: 10000,
+      benefitEventPerformanceAmount: 10000,
+      benefitEventPostingAmount: 9000,
+      benefitEventDiscountAmount: 1000,
+    })],
     previousRows: [],
   });
 
-  assert.equal(result.rows[0].cardBenefitStatus, "rule_matched");
+  assert.equal(result.rows[0].cardBenefitStatus, "event_exists");
   assert.equal(result.rows[1].cardBenefitStatus, "event_exists");
-  assert.equal(result.summary.benefitCandidates, 1);
-  assert.equal(result.summary.benefitExisting, 1);
+  assert.equal(result.rows[0].benefitEventIntegrity, "matched");
+  assert.equal(result.summary.benefitCandidates, 0);
+  assert.equal(result.summary.benefitExisting, 2);
+  assert.equal(result.summary.benefitEventMissing, 0);
+  assert.equal(result.summary.benefitAmountMismatches, 0);
+});
+
+test("reconciliation separates missing and amount-mismatched benefit events", () => {
+  const discounted = transaction({
+    sourceAssetName: "신한 레이디",
+    sourceCategoryName: "필수",
+    sourceSubcategoryName: "식비",
+    item: "아워홈",
+    memo: "점심",
+    approvalAmount: 7700,
+    postingAmount: 7315,
+    discountAmount: 385,
+  });
+  const importMappings: ImportMapping[] = [
+    ...mappings,
+    { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
+    { mappingType: "expense_category", sourceKey: "필수 / 식비", accountType: "expenses", accountId: "x61", confidence: 1 },
+  ];
+  const missing = reconcilePyeonhanTransactions({
+    transactions: [discounted],
+    mappings: importMappings,
+    mirrorEntries: [mirror({
+      leftAccountId: "x61",
+      rightAccountType: "liabilities",
+      rightAccountId: "x50",
+      item: "아워홈",
+      memo: "점심",
+      amount: 7315,
+    })],
+    previousRows: [],
+  });
+  const mismatched = reconcilePyeonhanTransactions({
+    transactions: [discounted],
+    mappings: importMappings,
+    mirrorEntries: [mirror({
+      leftAccountId: "x61",
+      rightAccountType: "liabilities",
+      rightAccountId: "x50",
+      item: "아워홈",
+      memo: "점심",
+      amount: 7315,
+      benefitEventId: "event-mismatch",
+      benefitEventApprovalAmount: 7700,
+      benefitEventPerformanceAmount: 7700,
+      benefitEventPostingAmount: 7315,
+      benefitEventDiscountAmount: 300,
+    })],
+    previousRows: [],
+  });
+
+  assert.equal(missing.rows[0].benefitEventIntegrity, "missing");
+  assert.equal(missing.summary.benefitEventMissing, 1);
+  assert.equal(mismatched.rows[0].benefitEventIntegrity, "amount_mismatch");
+  assert.equal(mismatched.rows[0].cardBenefitStatus, "needs_review");
+  assert.equal(mismatched.summary.benefitAmountMismatches, 1);
+  assert.equal(mismatched.summary.benefitExisting, 0);
 });
 
 test("refund cashback and support coupon adjustment remain explicit review-only policies", () => {

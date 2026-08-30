@@ -20,6 +20,15 @@ function dependencies(
       pendingSyncCount: 2,
     }),
     now: () => NOW,
+    getImportOperationsStatus: async () => ({
+      supported: true,
+      latestBatchId: 1,
+      latestBatchStatus: "review",
+      sourceFileHash: "a".repeat(64),
+      reviewRequiredCount: 190,
+      benefitApprovalCandidateCount: 0,
+      benefitEventExistsCount: 36,
+    }),
     ...overrides,
   };
 }
@@ -69,6 +78,17 @@ test("getSystemStatus keeps ETL and mirror state independent", async () => {
       enabled: false,
       state: "disabled",
       credentialsConfigured: false,
+      dryRunOnly: true,
+      label: null,
+    },
+    importOperations: {
+      supported: true,
+      latestBatchId: 1,
+      latestBatchStatus: "review",
+      sourceFileHash: "a".repeat(64),
+      reviewRequiredCount: 190,
+      benefitApprovalCandidateCount: 0,
+      benefitEventExistsCount: 36,
     },
   });
 });
@@ -87,4 +107,20 @@ test("getSystemStatus degrades honestly when the operation table is absent", asy
   assert.equal(result.mirror.freshness, "empty");
   assert.equal(result.pendingSyncCount, null);
   assert.equal(result.pendingSyncSupported, false);
+});
+
+test("getSystemStatus reports import operations as unsupported defensively", async () => {
+  const result = await getSystemStatus(dependencies({
+    getImportOperationsStatus: undefined,
+  }));
+
+  assert.deepEqual(result.importOperations, {
+    supported: false,
+    latestBatchId: null,
+    latestBatchStatus: null,
+    sourceFileHash: null,
+    reviewRequiredCount: 0,
+    benefitApprovalCandidateCount: 0,
+    benefitEventExistsCount: 0,
+  });
 });

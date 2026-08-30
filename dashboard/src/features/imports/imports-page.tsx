@@ -31,6 +31,7 @@ interface DryRunRow {
   reason: string;
   matchedWhooingEntryId: number | null;
   cardBenefitStatus: BenefitStatus;
+  benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
   cardBenefitCandidate: {
     ruleId: string;
     label: string;
@@ -71,6 +72,23 @@ interface DryRunResult {
     benefitCandidates: number;
     benefitUncertain: number;
     benefitExisting: number;
+    benefitEventMissing: number;
+    benefitAmountMismatches: number;
+  };
+}
+
+interface ImportRuntimeStatus {
+  gmailImport: {
+    state: "disabled" | "needs_credentials" | "ready";
+    dryRunOnly: boolean;
+  };
+  importOperations: {
+    supported: boolean;
+    latestBatchId: number | null;
+    latestBatchStatus: string | null;
+    reviewRequiredCount: number;
+    benefitApprovalCandidateCount: number;
+    benefitEventExistsCount: number;
   };
 }
 
@@ -107,15 +125,13 @@ export function ImportsPage() {
   const [busyBenefitRowId, setBusyBenefitRowId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [statusFilter, setStatusFilter] = useState<ImportStatus | "all">("all");
-  const [gmailState, setGmailState] = useState<"disabled" | "needs_credentials" | "ready">("disabled");
+  const [runtimeStatus, setRuntimeStatus] = useState<ImportRuntimeStatus | null>(null);
 
   useEffect(() => {
     fetch("/api/system/status", { cache: "no-store" })
       .then((response) => response.json())
-      .then((payload: { gmailImport?: { state?: "disabled" | "needs_credentials" | "ready" } }) => {
-        if (payload.gmailImport?.state) setGmailState(payload.gmailImport.state);
-      })
-      .catch(() => setGmailState("disabled"));
+      .then((payload: ImportRuntimeStatus) => setRuntimeStatus(payload))
+      .catch(() => setRuntimeStatus(null));
   }, []);
 
   async function fileRequest(path: string, mode: "dry-run" | "review" | "apply") {
@@ -183,6 +199,35 @@ export function ImportsPage() {
   const rows = result ? [...result.rows, ...result.possibleDeletes] : [];
   const filteredRows = statusFilter === "all" ? rows : rows.filter((row) => row.status === statusFilter);
   const benefitRows = result?.rows.filter((row) => row.transaction.discountAmount > 0) ?? [];
+  const benefitRuleSummary = [...benefitRows.reduce((summary, row) => {
+    const candidate = row.cardBenefitCandidate;
+    if (!candidate) return summary;
+    const current = summary.get(candidate.ruleId) ?? {
+      ruleId: candidate.ruleId,
+      label: candidate.label,
+      count: 0,
+      approvalAmount: 0,
+      performanceAmount: 0,
+      postingAmount: 0,
+      discountAmount: 0,
+    };
+    current.count += 1;
+    current.approvalAmount += row.transaction.approvalAmount;
+    current.performanceAmount += candidate.performanceAmount;
+    current.postingAmount += row.transaction.postingAmount;
+    current.discountAmount += row.transaction.discountAmount;
+    summary.set(candidate.ruleId, current);
+    return summary;
+  }, new Map<string, {
+    ruleId: string;
+    label: string;
+    count: number;
+    approvalAmount: number;
+    performanceAmount: number;
+    postingAmount: number;
+    discountAmount: number;
+  }>()).values()];
+  const gmailState = runtimeStatus?.gmailImport.state ?? "disabled";
   const gmailLabel = gmailState === "ready" ? "연결 준비 완료" : gmailState === "needs_credentials" ? "credential 필요" : "비활성";
 
   return (
@@ -217,7 +262,10 @@ export function ImportsPage() {
               <Upload size={15} />{busy ? "처리 중" : "dry-run 비교"}
             </Button>
           </div>
-          <p className="metric-detail">Gmail 자동 감지: {gmailLabel}. 5MB 이하 편한가계부 .xlsx 파일을 사용하세요.</p>
+          <p className="metric-detail">Gmail 자동 감지: {gmailLabel} · {runtimeStatus?.gmailImport.dryRunOnly ?? true ? "dry-run only" : "write 허용"}. 5MB 이하 편한가계부 .xlsx 파일을 사용하세요.</p>
+          <p className="metric-detail">최근 import batch: {runtimeStatus?.importOperations.latestBatchId
+            ? `#${runtimeStatus.importOperations.latestBatchId} · ${runtimeStatus.importOperations.latestBatchStatus} · 승인 후보 ${runtimeStatus.importOperations.benefitApprovalCandidateCount}건 · 기존 event ${runtimeStatus.importOperations.benefitEventExistsCount}건`
+            : "없음"}</p>
           {message ? <p className="import-feedback" role="status">{message}</p> : null}
         </CardContent>
       </Card>
@@ -232,6 +280,9 @@ export function ImportsPage() {
               ["검토·매핑", result.summary.reviewRequired + result.summary.mappingRequired],
               ["수정·삭제·충돌", result.summary.possibleUpdates + result.summary.possibleDeletes + result.summary.conflicts],
               ["혜택 승인 후보", result.summary.benefitCandidates],
+              ["기존 event", result.summary.benefitExisting],
+              ["event 누락", result.summary.benefitEventMissing],
+              ["금액 불일치", result.summary.benefitAmountMismatches],
             ].map(([label, value]) => (
               <Card key={String(label)} className="import-summary-card">
                 <CardDescription>{label}</CardDescription><strong>{value}</strong>
@@ -244,8 +295,18 @@ export function ImportsPage() {
           ) : null}
           <div className="import-warning import-policy-note">
             <AlertTriangle size={17} />
-            <p>자동 삭제는 수행하지 않음. 수정·삭제는 review 후 반영하며, 환급/캐시백은 수입 의미가 섞여 있어 수동 정책 필요 상태로 유지합니다.</p>
+            <p>자동 삭제는 수행하지 않음. 수정·삭제는 review 후 반영합니다. 환급/캐시백은 수입, 지출 환급, 카드 할인 중 의미가 섞일 수 있어 자동 처리하지 않습니다. 수입 의미가 섞여 있어 수동 정책 필요 상태입니다. 민생지원쿠폰 차액조정은 balance adjustment 또는 별도 지원금 처리 정책 확정 전까지 review-only입니다.</p>
           </div>
+
+          {result.summary.benefitCandidates === 0
+            && result.summary.benefitExisting > 0
+            && result.summary.benefitEventMissing === 0
+            && result.summary.benefitAmountMismatches === 0 ? (
+              <div className="import-feedback" role="status">
+                <strong>현재 추가로 승인할 카드혜택 후보는 없습니다.</strong>
+                <p>감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다. 신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다.</p>
+              </div>
+            ) : null}
 
           {benefitRows.length > 0 ? (
             <Card className="transaction-panel">
@@ -265,6 +326,17 @@ export function ImportsPage() {
               </CardHeader>
               <CardContent>
                 <p className="metric-detail">rule 확정 후보만 단건 승인할 수 있습니다. 불확실 할인은 자동 event 생성 대상이 아닙니다.</p>
+                {benefitRuleSummary.length > 0 ? (
+                  <div className="import-mapping-list">
+                    {benefitRuleSummary.map((rule) => (
+                      <div key={rule.ruleId}>
+                        <Badge tone="neutral">{rule.count}건</Badge>
+                        <strong>{rule.label}</strong>
+                        <span>승인 {won(rule.approvalAmount)} · 실적 {won(rule.performanceAmount)} · 매입 {won(rule.postingAmount)} · 할인 {won(rule.discountAmount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="table-scroll">
                   <table className="data-table import-benefit-table">
                     <thead><tr>

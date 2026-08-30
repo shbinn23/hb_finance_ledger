@@ -28,4 +28,13 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /수입 의미가 섞여 있어 수동 정책 필요/);
   assert.match(source, /자동 삭제는 수행하지 않음/);
   assert.match(source, /Gmail 자동 감지/);
+  assert.match(source, /dry-run only/);
+  assert.match(source, /최근 import batch/);
+  assert.match(source, /현재 추가로 승인할 카드혜택 후보는 없습니다/);
+  assert.match(source, /감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다/);
+  assert.match(source, /신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다/);
+  assert.match(source, /event 누락/);
+  assert.match(source, /금액 불일치/);
+  assert.match(source, /환급\/캐시백은 수입, 지출 환급, 카드 할인 중 의미가 섞일 수 있어 자동 처리하지 않습니다/);
+  assert.match(source, /민생지원쿠폰 차액조정은 balance adjustment 또는 별도 지원금 처리 정책 확정 전까지 review-only입니다/);
 });

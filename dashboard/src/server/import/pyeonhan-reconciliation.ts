@@ -43,6 +43,10 @@ export interface MirrorEntry {
   memo: string;
   amount: number;
   benefitEventId?: string | null;
+  benefitEventApprovalAmount?: number | null;
+  benefitEventPerformanceAmount?: number | null;
+  benefitEventPostingAmount?: number | null;
+  benefitEventDiscountAmount?: number | null;
 }
 
 export interface PreviousImportRow {
@@ -69,6 +73,7 @@ export interface ReconciledImportRow {
   mapping: ResolvedImportMapping;
   cardBenefitCandidate: PyeonhanCardBenefitCandidate | null;
   cardBenefitStatus: ImportBenefitStatus;
+  benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
 }
 
 export interface ImportMappingGap {
@@ -93,6 +98,8 @@ export interface PyeonhanReconciliationResult {
     benefitCandidates: number;
     benefitUncertain: number;
     benefitExisting: number;
+    benefitEventMissing: number;
+    benefitAmountMismatches: number;
   };
 }
 
@@ -224,6 +231,21 @@ function emptyMapping(): ResolvedImportMapping {
   return { sourceAccount: null, counterpartyAccount: null, categoryAccount: null };
 }
 
+function benefitEventIntegrity(
+  transaction: NormalizedPyeonhanTransaction,
+  entry: MirrorEntry | undefined,
+  expectedPerformanceAmount: number,
+): ReconciledImportRow["benefitEventIntegrity"] {
+  if (transaction.discountAmount <= 0 || !entry) return "not_applicable";
+  if (!entry.benefitEventId) return "missing";
+  return entry.benefitEventApprovalAmount === transaction.approvalAmount
+    && entry.benefitEventPerformanceAmount === expectedPerformanceAmount
+    && entry.benefitEventPostingAmount === transaction.postingAmount
+    && entry.benefitEventDiscountAmount === transaction.discountAmount
+    ? "matched"
+    : "amount_mismatch";
+}
+
 function comparisonGroup(input: {
   occurredDate?: string;
   entryType?: string;
@@ -260,6 +282,7 @@ function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
     mapping: emptyMapping(),
     cardBenefitCandidate: null,
     cardBenefitStatus: "not_applicable",
+    benefitEventIntegrity: "not_applicable",
   };
 }
 
@@ -303,6 +326,7 @@ export function reconcilePyeonhanTransactions({
       cardBenefitStatus: transaction.discountAmount > 0
         ? cardBenefitCandidate ? "needs_review" : "rule_uncertain"
         : "not_applicable",
+      benefitEventIntegrity: "not_applicable",
     };
     const manualReason = manualReviewReason(transaction);
     if (manualReason) return { ...base, status: "review_required", reason: manualReason };
@@ -358,19 +382,29 @@ export function reconcilePyeonhanTransactions({
 
     if (transaction.discountAmount > 0) {
       if (similarMirror) usedMirrorIds.add(similarMirror.entryId);
+      const eventIntegrity = benefitEventIntegrity(
+        transaction,
+        similarMirror,
+        cardBenefitCandidate?.performanceAmount ?? transaction.approvalAmount,
+      );
       return {
         ...base,
-        cardBenefitStatus: similarMirror?.benefitEventId
+        cardBenefitStatus: eventIntegrity === "matched"
           ? "event_exists"
+          : eventIntegrity === "amount_mismatch"
+            ? "needs_review"
           : cardBenefitCandidate && similarMirror
             ? "rule_matched"
             : cardBenefitCandidate
               ? "needs_review"
               : "rule_uncertain",
-        reason: cardBenefitCandidate
-          ? `카드혜택 ${cardBenefitCandidate.label} 후보입니다. 자동 등록 전 확인이 필요합니다.`
+        reason: eventIntegrity === "amount_mismatch"
+          ? "기존 카드혜택 event의 승인·매입·할인 금액이 import와 일치하지 않습니다."
+          : cardBenefitCandidate
+            ? `카드혜택 ${cardBenefitCandidate.label} 후보입니다. 자동 등록 전 확인이 필요합니다.`
           : "할인 rule을 확정할 수 없어 자동 등록하지 않습니다.",
         matchedWhooingEntryId: similarMirror?.entryId ?? null,
+        benefitEventIntegrity: eventIntegrity,
       };
     }
 
@@ -431,6 +465,8 @@ export function reconcilePyeonhanTransactions({
       benefitCandidates: rows.filter((row) => row.cardBenefitStatus === "rule_matched").length,
       benefitUncertain: rows.filter((row) => row.cardBenefitStatus === "rule_uncertain" || row.cardBenefitStatus === "needs_review").length,
       benefitExisting: rows.filter((row) => row.cardBenefitStatus === "event_exists").length,
+      benefitEventMissing: rows.filter((row) => row.benefitEventIntegrity === "missing").length,
+      benefitAmountMismatches: rows.filter((row) => row.benefitEventIntegrity === "amount_mismatch").length,
     },
   };
 }

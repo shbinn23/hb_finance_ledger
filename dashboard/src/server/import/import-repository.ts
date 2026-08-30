@@ -128,13 +128,21 @@ export async function getMirrorEntriesForRange(startDate: string, endDate: strin
     memo: string | null;
     money: string;
     benefit_event_id: string | null;
+    benefit_approval_amount: string | null;
+    benefit_performance_amount: string | null;
+    benefit_posting_amount: string | null;
+    benefit_discount_amount: string | null;
   }>(
     `
     select e.entry_id, e.entry_date::text, e.l_account, e.l_account_id, e.r_account, e.r_account_id,
-           e.item, e.memo, e.money::text, benefit.event_id::text as benefit_event_id
+           e.item, e.memo, e.money::text, benefit.event_id::text as benefit_event_id,
+           benefit.approval_amount::text as benefit_approval_amount,
+           benefit.performance_amount::text as benefit_performance_amount,
+           benefit.posting_amount::text as benefit_posting_amount,
+           benefit.applied_discount_amount::text as benefit_discount_amount
     from whooing.entries e
     left join lateral (
-      select event_id
+      select event_id, approval_amount, performance_amount, posting_amount, applied_discount_amount
       from app.card_benefit_events
       where whooing_entry_id = e.entry_id
         and (section_id = e.section_id or section_id is null)
@@ -159,6 +167,10 @@ export async function getMirrorEntriesForRange(startDate: string, endDate: strin
     memo: row.memo ?? "",
     amount: Number(row.money),
     benefitEventId: row.benefit_event_id,
+    benefitEventApprovalAmount: row.benefit_approval_amount === null ? null : Number(row.benefit_approval_amount),
+    benefitEventPerformanceAmount: row.benefit_performance_amount === null ? null : Number(row.benefit_performance_amount),
+    benefitEventPostingAmount: row.benefit_posting_amount === null ? null : Number(row.benefit_posting_amount),
+    benefitEventDiscountAmount: row.benefit_discount_amount === null ? null : Number(row.benefit_discount_amount),
   }));
 }
 

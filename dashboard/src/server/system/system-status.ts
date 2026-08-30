@@ -7,14 +7,27 @@ export interface MirrorActivity {
   pendingSyncCount: number | null;
 }
 
+export interface ImportOperationsStatus {
+  supported: boolean;
+  latestBatchId: number | null;
+  latestBatchStatus: string | null;
+  sourceFileHash: string | null;
+  reviewRequiredCount: number;
+  benefitApprovalCandidateCount: number;
+  benefitEventExistsCount: number;
+}
+
 export interface SystemStatusDependencies {
   checkEtlHealth: () => Promise<EtlStatus>;
   getMirrorActivity: () => Promise<MirrorActivity>;
+  getImportOperationsStatus?: () => Promise<ImportOperationsStatus>;
   now?: () => Date;
   getGmailImportStatus?: () => {
     enabled: boolean;
     state: "disabled" | "needs_credentials" | "ready";
     credentialsConfigured: boolean;
+    dryRunOnly: boolean;
+    label: string | null;
   };
 }
 
@@ -33,7 +46,10 @@ export interface SystemStatus {
     enabled: boolean;
     state: "disabled" | "needs_credentials" | "ready";
     credentialsConfigured: boolean;
+    dryRunOnly: boolean;
+    label: string | null;
   };
+  importOperations: ImportOperationsStatus;
 }
 
 type HealthResponse = {
@@ -78,9 +94,18 @@ export async function getSystemStatus(
 ): Promise<SystemStatus> {
   const now = dependencies.now?.() ?? new Date();
   const thresholdHours = getMirrorFreshnessThresholdHours();
-  const [etlStatus, mirror] = await Promise.all([
+  const [etlStatus, mirror, importOperations] = await Promise.all([
     dependencies.checkEtlHealth(),
     dependencies.getMirrorActivity(),
+    dependencies.getImportOperationsStatus?.() ?? Promise.resolve({
+      supported: false,
+      latestBatchId: null,
+      latestBatchStatus: null,
+      sourceFileHash: null,
+      reviewRequiredCount: 0,
+      benefitApprovalCandidateCount: 0,
+      benefitEventExistsCount: 0,
+    }),
   ]);
 
   return {
@@ -98,6 +123,9 @@ export async function getSystemStatus(
       enabled: false,
       state: "disabled",
       credentialsConfigured: false,
+      dryRunOnly: true,
+      label: null,
     },
+    importOperations,
   };
 }

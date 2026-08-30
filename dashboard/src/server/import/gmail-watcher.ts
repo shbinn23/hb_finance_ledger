@@ -14,6 +14,8 @@ export interface GmailWatcherAdapter {
 export const GMAIL_IMPORT_ENABLED_ENV = "GMAIL_IMPORT_ENABLED";
 export const GMAIL_IMPORT_QUERY_ENV = "GMAIL_IMPORT_QUERY";
 export const GMAIL_IMPORT_POLL_INTERVAL_ENV = "GMAIL_IMPORT_POLL_INTERVAL_MS";
+export const GMAIL_IMPORT_DRY_RUN_ONLY_ENV = "GMAIL_IMPORT_DRY_RUN_ONLY";
+export const GMAIL_IMPORT_LABEL_ENV = "GMAIL_IMPORT_LABEL";
 export const DEFAULT_PYEONHAN_GMAIL_QUERY = "has:attachment filename:xlsx subject:(편한가계부 OR 가계부)";
 export const DEFAULT_GMAIL_IMPORT_POLL_INTERVAL_MS = 300_000;
 
@@ -25,6 +27,8 @@ export interface GmailImportRuntimeStatus {
   query: string;
   pollIntervalMs: number;
   credentialsConfigured: boolean;
+  dryRunOnly: boolean;
+  label: string | null;
 }
 
 export function buildGmailImportQuery(env: GmailImportEnv = process.env) {
@@ -41,7 +45,11 @@ function gmailPollInterval(env: GmailImportEnv) {
 export function getGmailImportRuntimeStatus(env: GmailImportEnv = process.env): GmailImportRuntimeStatus {
   const enabled = env[GMAIL_IMPORT_ENABLED_ENV]?.toLowerCase() === "true";
   const credentialFiles = Boolean(env.GMAIL_CREDENTIALS_FILE && env.GMAIL_TOKEN_FILE);
-  const explicitOAuth = Boolean(env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_TOKEN_FILE);
+  const explicitOAuth = Boolean(
+    env.GMAIL_OAUTH_CLIENT_ID
+    && env.GMAIL_OAUTH_CLIENT_SECRET
+    && env.GMAIL_OAUTH_REFRESH_TOKEN,
+  );
   const credentialsConfigured = credentialFiles || explicitOAuth;
   return {
     enabled,
@@ -49,6 +57,8 @@ export function getGmailImportRuntimeStatus(env: GmailImportEnv = process.env): 
     query: buildGmailImportQuery(env),
     pollIntervalMs: gmailPollInterval(env),
     credentialsConfigured,
+    dryRunOnly: env[GMAIL_IMPORT_DRY_RUN_ONLY_ENV]?.toLowerCase() !== "false",
+    label: env[GMAIL_IMPORT_LABEL_ENV]?.trim() || null,
   };
 }
 
@@ -93,4 +103,22 @@ export async function pollGmailAttachmentsOnce<T>(input: {
     results.push(await processGmailAttachment(attachment, input));
   }
   return results;
+}
+
+export async function pollConfiguredGmailAttachmentsOnce<T>(input: {
+  env?: GmailImportEnv;
+  adapter: GmailWatcherAdapter;
+  wasProcessed: (identity: string) => Promise<boolean>;
+  wasSourceFileProcessed: (sourceFileHash: string) => Promise<boolean>;
+  importAttachment: (attachment: GmailAttachmentEnvelope) => Promise<T>;
+}) {
+  const runtime = getGmailImportRuntimeStatus(input.env);
+  if (runtime.state !== "ready") {
+    return { status: runtime.state, runtime, results: [] } as const;
+  }
+  const results = await pollGmailAttachmentsOnce({
+    ...input,
+    query: runtime.query,
+  });
+  return { status: "polled" as const, runtime, results };
 }
