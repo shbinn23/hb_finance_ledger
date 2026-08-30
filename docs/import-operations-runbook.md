@@ -142,6 +142,35 @@ serialized before the existing review batch is reused.
   policy is explicitly chosen.
 - Update and delete candidates are never automatically applied.
 
+## Practical monthly snapshot validation
+
+Use one full-month export after making these four controlled changes in 편한가계부: modify one existing
+expense, add one asset, enter the reciprocal in/out rows for one transfer, and add one expense. Send the
+export as a new Gmail attachment, then run `Gmail dry-run 확인` once.
+
+- **Existing expense modification:** an unchanged source identity with a changed content hash is
+  `possible_update`. When date, asset, or amount changes the identity, reconciliation links it only when
+  the missing previous row and new row form an unambiguous one-to-one revision. `/imports` shows the
+  previous snapshot and current values plus mirror evidence. No field is updated automatically.
+- **New asset:** an unknown source asset is `mapping_required`. The page shows affected rows, total
+  posting amount, and conservative suggestions from existing Whooing accounts. Saving a confirmed
+  mapping changes only `app.import_mappings`. New Whooing account creation is preview-only and must be
+  done manually before mapping.
+- **Transfer:** reciprocal `이체출금` and `이체입금` rows merge only when date, amount, both assets, and
+  memo agree. The UI states `2개 편한가계부 row → 1개 Whooing transfer`. Missing either account mapping
+  keeps the transfer in `mapping_required`; an existing mirror transfer becomes `duplicate`.
+- **New expense:** a positive, fully mapped, non-duplicate, non-review row is `auto_creatable`. The
+  deterministic `pyeonhan:<source_identity_key>` operation key protects retries. With
+  `GMAIL_IMPORT_DRY_RUN_ONLY=true`, both the UI and server reject the Whooing create action.
+
+Automatic deletion is prohibited. A missing prior row is shown as `possible_delete` for review only.
+Refund, cashback, support coupon, uncertain card benefit, update, and delete rows never enter automatic
+creation.
+
+Before disabling dry-run-only, verify ETL is online, the mirror is fresh, mappings are correct, every
+candidate payload is reviewed, and the latest export produces no unexplained conflict. Enable at most one
+explicitly approved write and verify its operation key and mirror result before continuing.
+
 ## `/imports` interpretation
 
 - Approval candidates `0`, missing events `0`, and amount mismatches `0` is a normal fully reconciled state.
