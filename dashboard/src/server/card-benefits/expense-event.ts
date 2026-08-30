@@ -1,5 +1,5 @@
 import type { CardBenefitEvaluationResult } from "@/lib/card-benefits/types";
-import type { ExpenseModalSubmission } from "@/features/slack/ledger-entry";
+import type { ExpenseEntrySubmission } from "@/server/ledger/ledger-entry-payload";
 import type { CardBenefitEventInsert } from "./repository";
 
 export function buildExpenseCardBenefitEventInsert({
@@ -12,7 +12,7 @@ export function buildExpenseCardBenefitEventInsert({
   sectionId: string | null;
   whooingEntryId: number | null;
   entryDate: number;
-  submission: ExpenseModalSubmission;
+  submission: ExpenseEntrySubmission;
   evaluation: CardBenefitEvaluationResult;
 }): CardBenefitEventInsert {
   return {

@@ -188,7 +188,7 @@ test("createDashboardLedgerEntry keeps a successful entry when best-effort sync 
   }
 });
 
-test("createDashboardLedgerEntry posts a transfer entry with the Slack transfer direction", async () => {
+test("createDashboardLedgerEntry posts a transfer entry with the Whooing transfer direction", async () => {
   const createdPayloads: unknown[] = [];
 
   const result = await createDashboardLedgerEntry({

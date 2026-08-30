@@ -63,7 +63,7 @@ function buildRightInsightPanels(summary: CardsViewModel["summary"]): RightInsig
         },
         {
           type: "note",
-          text: "신규 Slack 입력분부터 승인금액, 실적금액, 적용 할인, 매입금액을 구조화해 추적합니다.",
+          text: "Dashboard 카드혜택 입력분부터 승인금액, 실적금액, 적용 할인, 매입금액을 구조화해 추적합니다.",
         },
       ],
     },

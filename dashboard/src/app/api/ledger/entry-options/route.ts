@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { getSlackLedgerEntryAccounts } from "@/server/whooing/account-repository";
+import { getLedgerEntryAccounts } from "@/server/whooing/account-repository";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const accounts = await getSlackLedgerEntryAccounts();
+  const accounts = await getLedgerEntryAccounts();
 
   return NextResponse.json({
     expenseCategories: accounts.expenseCategories,

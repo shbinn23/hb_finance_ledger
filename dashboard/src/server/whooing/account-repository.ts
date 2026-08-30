@@ -45,7 +45,7 @@ function toGroupedExpenseAccounts(rows: AccountDbRow[]): WhooingLedgerAccount[] 
   });
 }
 
-export async function getSlackLedgerEntryAccounts() {
+export async function getLedgerEntryAccounts() {
   const [expenseCategories, assetAccounts, liabilityAccounts, incomeCategories, capitalAccounts] = await Promise.all([
     query<AccountDbRow>(
       `

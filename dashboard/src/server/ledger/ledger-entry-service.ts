@@ -6,16 +6,18 @@ import {
   buildWhooingIncomeEntryPayload,
   buildWhooingTransferEntryPayload,
   calculateExpensePosting,
-  type BalanceAdjustmentModalSubmission,
-  type CardPaymentModalSubmission,
-  ExpensePostingValidationError,
-  type ExpenseModalSubmission,
-  type IncomeModalSubmission,
-  type TransferModalSubmission,
+  type BalanceAdjustmentEntrySubmission,
+  type CardPaymentEntrySubmission,
+  type ExpenseEntrySubmission,
+  type IncomeEntrySubmission,
+  LedgerEntryValidationError,
+  type TransferEntrySubmission,
   type WhooingEntryPayload,
-} from "../../features/slack/ledger-entry.ts";
+} from "./ledger-entry-payload.ts";
 import { evaluateCardBenefit } from "../../lib/card-benefits/evaluator.ts";
-import type { CardBenefitRule, CardBenefitEvaluationResult } from "../../lib/card-benefits/types.ts";
+import type { CardBenefitRule } from "../../lib/card-benefits/types.ts";
+import { buildExpenseCardBenefitEventInsert } from "../card-benefits/expense-event.ts";
+import type { CardBenefitEventInsert } from "../card-benefits/repository.ts";
 import { extractWhooingEntryId } from "../whooing/entry-id.ts";
 
 export type DashboardLedgerEntryType = "expense" | "income" | "transfer" | "card_payment" | "balance_adjustment";
@@ -45,27 +47,6 @@ export interface DashboardLedgerEntryRequest {
   discountRuleId?: string | null;
 }
 
-export interface DashboardCardBenefitEventInsert {
-  sectionId: string | null;
-  whooingEntryId: number | null;
-  entryDate: number;
-  ruleId: string | null;
-  cardAccountType: "liabilities";
-  cardAccountId: string;
-  expenseAccountId: string;
-  merchant: string;
-  paymentChannel: "general" | "simple_pay";
-  approvalAmount: number;
-  performanceAmount: number;
-  eligibleDiscountAmount: number;
-  appliedDiscountAmount: number;
-  postingAmount: number;
-  capUsedBefore: number;
-  capUsedAfter: number;
-  evaluationStatus: string;
-  evaluationReason: string;
-}
-
 export interface DashboardLedgerEntryDependencies {
   assertExpenseCategory: (accountId: string) => Promise<boolean>;
   assertPaymentAccount: (accountType: string, accountId: string) => Promise<boolean>;
@@ -85,7 +66,7 @@ export interface DashboardLedgerEntryDependencies {
   }>;
   createEntry: (payload: WhooingEntryPayload) => Promise<unknown>;
   syncForDate: (occurredDate: string) => Promise<unknown>;
-  insertCardBenefitEvent: (event: DashboardCardBenefitEventInsert) => Promise<unknown>;
+  insertCardBenefitEvent: (event: CardBenefitEventInsert) => Promise<unknown>;
 }
 
 export type DashboardLedgerEntryResult =
@@ -213,7 +194,7 @@ function validateBalanceAdjustmentRequest(request: DashboardLedgerEntryRequest) 
   return fieldErrors;
 }
 
-function toExpenseSubmission(request: DashboardLedgerEntryRequest): ExpenseModalSubmission {
+function toExpenseSubmission(request: DashboardLedgerEntryRequest): ExpenseEntrySubmission {
   return {
     approvalAmount: String(request.amount),
     occurredDate: request.occurredDate,
@@ -229,7 +210,7 @@ function toExpenseSubmission(request: DashboardLedgerEntryRequest): ExpenseModal
   };
 }
 
-function toIncomeSubmission(request: DashboardLedgerEntryRequest): IncomeModalSubmission {
+function toIncomeSubmission(request: DashboardLedgerEntryRequest): IncomeEntrySubmission {
   return {
     amount: String(request.amount),
     occurredDate: request.occurredDate,
@@ -244,7 +225,7 @@ function toIncomeSubmission(request: DashboardLedgerEntryRequest): IncomeModalSu
   };
 }
 
-function toTransferSubmission(request: DashboardLedgerEntryRequest): TransferModalSubmission {
+function toTransferSubmission(request: DashboardLedgerEntryRequest): TransferEntrySubmission {
   return {
     amount: String(request.amount),
     occurredDate: request.occurredDate,
@@ -259,7 +240,7 @@ function toTransferSubmission(request: DashboardLedgerEntryRequest): TransferMod
   };
 }
 
-function toCardPaymentSubmission(request: DashboardLedgerEntryRequest): CardPaymentModalSubmission {
+function toCardPaymentSubmission(request: DashboardLedgerEntryRequest): CardPaymentEntrySubmission {
   return {
     amount: String(request.amount),
     occurredDate: request.occurredDate,
@@ -274,7 +255,7 @@ function toCardPaymentSubmission(request: DashboardLedgerEntryRequest): CardPaym
   };
 }
 
-function toBalanceAdjustmentSubmission(request: DashboardLedgerEntryRequest): BalanceAdjustmentModalSubmission {
+function toBalanceAdjustmentSubmission(request: DashboardLedgerEntryRequest): BalanceAdjustmentEntrySubmission {
   const targetAccountType = request.targetAccountType === "assets" || request.targetAccountType === "liabilities"
     ? request.targetAccountType
     : "";
@@ -317,48 +298,15 @@ function syncPendingLogContext(request: DashboardLedgerEntryRequest, error: unkn
   };
 }
 
-function buildBenefitEventInsert({
-  sectionId,
-  whooingEntryId,
-  submission,
-  evaluation,
-}: {
-  sectionId: string | undefined;
-  whooingEntryId: number | null;
-  submission: ExpenseModalSubmission;
-  evaluation: CardBenefitEvaluationResult;
-}): DashboardCardBenefitEventInsert {
-  return {
-    sectionId: sectionId ?? null,
-    whooingEntryId,
-    entryDate: whooingDateValue(submission.occurredDate),
-    ruleId: evaluation.ruleId,
-    cardAccountType: "liabilities",
-    cardAccountId: submission.paymentAccountId,
-    expenseAccountId: submission.categoryAccountId,
-    merchant: submission.merchant.trim(),
-    paymentChannel: evaluation.paymentChannel ?? "general",
-    approvalAmount: evaluation.approvalAmount,
-    performanceAmount: evaluation.performanceAmount,
-    eligibleDiscountAmount: evaluation.eligibleDiscountAmount,
-    appliedDiscountAmount: evaluation.appliedDiscountAmount,
-    postingAmount: evaluation.postingAmount,
-    capUsedBefore: evaluation.capUsedBefore,
-    capUsedAfter: evaluation.capUsedAfter,
-    evaluationStatus: evaluation.eligible ? "applied" : "not_applied",
-    evaluationReason: evaluation.reason,
-  };
-}
-
 async function evaluateExpenseBenefit(
-  submission: ExpenseModalSubmission,
+  submission: ExpenseEntrySubmission,
   dependencies: DashboardLedgerEntryDependencies,
 ) {
   if (!submission.discountRuleId || submission.discountRuleId === "none") {
     return null;
   }
   if (submission.paymentAccountType !== "liabilities") {
-    throw new ExpensePostingValidationError(
+    throw new LedgerEntryValidationError(
       "paymentAccountId",
       "카드 혜택은 카드/부채 결제수단을 선택해야 적용할 수 있습니다.",
     );
@@ -403,7 +351,7 @@ export async function createDashboardLedgerEntry({
 
   let payload: WhooingEntryPayload;
   let successLabel = "거래";
-  let benefitEvent: DashboardCardBenefitEventInsert | null = null;
+  let benefitEvent: CardBenefitEventInsert | null = null;
 
   try {
     if (request.type === "expense") {
@@ -440,9 +388,10 @@ export async function createDashboardLedgerEntry({
       payload = buildWhooingExpenseEntryPayload({ sectionId, submission, calculation });
       successLabel = "지출";
       if (benefit) {
-        benefitEvent = buildBenefitEventInsert({
-          sectionId,
+        benefitEvent = buildExpenseCardBenefitEventInsert({
+          sectionId: sectionId ?? null,
           whooingEntryId: null,
+          entryDate: whooingDateValue(submission.occurredDate),
           submission,
           evaluation: benefit.evaluation,
         });
@@ -535,9 +484,9 @@ export async function createDashboardLedgerEntry({
       return invalidResult("unsupported_type", "지원하지 않는 거래 유형입니다.");
     }
   } catch (error) {
-    if (error instanceof ExpensePostingValidationError) {
+    if (error instanceof LedgerEntryValidationError) {
       return invalidResult("invalid_request", error.message, {
-        [error.blockId]: error.message,
+        [error.fieldId]: error.message,
       });
     }
     return invalidResult("invalid_request", "입력값을 확인해 주세요.");

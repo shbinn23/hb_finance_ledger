@@ -17,6 +17,13 @@ This repository is the canonical version of the personal finance ledger project.
 
 Legacy finance repositories and old fortress/whooing migration resources were removed after this repository was promoted. Actual database data is stored in the local Docker volume `hb_finance_ledger_postgres_data` and is not committed to Git.
 
+## Product Direction
+
+- Whooing is the source of truth for ledger entries. `whooing.*` is a local read mirror, while `app.*` stores structured application metadata such as card benefit evidence.
+- The Dashboard provides reporting, five ledger entry types, card benefit tracking, card bill repayment, and ML insights.
+- Entry creation always uses the Whooing API. The ETL service refreshes the local mirror after writes on a best-effort basis.
+- The unused Slack entry flow has been removed. The next import path is 편한가계부 Excel/Gmail import, Dashboard reconciliation, then confirmed Whooing submission.
+
 ## Database Targets
 
 The project uses `ledger` as the PostgreSQL database name and `whooing` as the schema that mirrors the Whooing API structure.
@@ -68,9 +75,9 @@ When running the Dashboard directly on the host, start `ml-engine` with compose 
 ML_ENGINE_URL=http://127.0.0.1:8000
 ```
 
-## Slack Expense Flow Runtime
+## Dashboard Ledger Entry Runtime
 
-Slack `/expense` entry submission uses the Dashboard plus the ETL HTTP service. The ETL service exposes `POST /sync/whooing` for best-effort local DB sync after a Whooing entry is created.
+Dashboard ledger entry submission uses the Whooing write API plus the ETL HTTP service. The ETL service exposes `POST /sync/whooing` for best-effort local DB sync after a Whooing entry is created.
 
 Run the required local services:
 
@@ -90,10 +97,8 @@ When running the Dashboard directly on the host, start `etl-service` with compos
 ETL_SERVICE_URL=http://127.0.0.1:8080
 ```
 
-Required env names for the Slack expense flow:
+Required env names for Dashboard ledger entry:
 
-- `SLACK_SIGNING_SECRET`
-- `SLACK_BOT_TOKEN`
 - `WHOOING_APP_ID`
 - `WHOOING_TOKEN`
 - `WHOOING_SIGNATURE`
@@ -107,51 +112,16 @@ Required env names for the Slack expense flow:
 
 Do not commit secret values.
 
-Slack should send slash command and interactivity requests to the Dashboard endpoint:
+The Dashboard writes entries through:
 
 ```text
-POST /api/slack/ledger-entry
+POST /api/ledger/entries
 ```
 
-Slack App settings:
+Account and category options are read from:
 
-- Slash Command: `/expense`
-- Slash Command Request URL: `{public_url}/api/slack/ledger-entry`
-- Interactivity: enabled
-- Interactivity Request URL: `{public_url}/api/slack/ledger-entry`
-- If the ngrok or public URL changes, update both Slack URLs.
+```text
+GET /api/ledger/entry-options
+```
 
-Manual test input:
-
-- 승인금액: `7700`
-- 거래일: test date
-- 내용/가맹점: `SlackTest스타벅스`
-- 카드 혜택: `점심시간 5% 할인`
-- 메모: `테스트`
-
-Expected result:
-
-- 할인액: `385`
-- Whooing `money`: `7315`
-- `memo` includes `승인금액 7,700원`, `카드혜택 점심시간 5% 할인`, and `할인액 385원`
-
-Test cleanup:
-
-- The manual test creates a real Whooing entry.
-- Delete the test entry from Whooing after testing.
-- After deleting it, sync the same date so the local Dashboard DB no longer shows the test row.
-
-Before merging `feature/slack-ledger-entry`:
-
-- `/expense` Modal opens from Slack.
-- Slack submit creates a Whooing entry.
-- Whooing `money` is the discount-adjusted `postingAmount`.
-- `memo` includes approval amount, card benefit, and discount amount.
-- ETL service sync reflects the entry in the local DB.
-- Test entry deletion is reflected in the local DB after sync.
-- Expense category options display `{groupTitle} / {accountTitle}`.
-- Sync timeout wording does not read like registration failure.
-- Slash Command and Interactivity setup are documented.
-- `docker compose --profile etl config --quiet` passes.
-- `npm run lint` passes.
-- `npm run build` passes.
+Supported entry types are expense, income, transfer, card payment, and balance adjustment. `whooing.entries` remains a local mirror: entry creation always goes through the Whooing API, then the selected date is synced on a best-effort basis. If entry creation succeeds but sync is delayed, do not submit the same transaction again.

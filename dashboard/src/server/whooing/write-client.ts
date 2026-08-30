@@ -1,4 +1,4 @@
-import type { WhooingEntryPayload } from "@/features/slack/ledger-entry";
+import type { WhooingEntryPayload } from "@/server/ledger/ledger-entry-payload";
 
 const WHOOING_API_BASE_URL = "https://whooing.com/api";
 
