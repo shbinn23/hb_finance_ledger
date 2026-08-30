@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildGmailImportQuery,
+  getGmailImportRuntimeStatus,
   gmailAttachmentIdentity,
+  pollGmailAttachmentsOnce,
   processGmailAttachment,
   type GmailAttachmentEnvelope,
 } from "./gmail-watcher.ts";
@@ -62,4 +65,43 @@ test("gmail watcher blocks identical attachment bytes across different messages"
 
   assert.equal(result.status, "duplicate_file");
   assert.equal(imports, 0);
+});
+
+test("gmail runtime stays disabled without both enabled flag and credential files", () => {
+  assert.deepEqual(getGmailImportRuntimeStatus({}), {
+    enabled: false,
+    state: "disabled",
+    query: "has:attachment filename:xlsx subject:(편한가계부 OR 가계부)",
+    pollIntervalMs: 300000,
+    credentialsConfigured: false,
+  });
+  assert.equal(getGmailImportRuntimeStatus({ GMAIL_IMPORT_ENABLED: "true" }).state, "needs_credentials");
+  assert.equal(getGmailImportRuntimeStatus({
+    GMAIL_IMPORT_ENABLED: "true",
+    GMAIL_CREDENTIALS_FILE: "/run/secrets/gmail-client.json",
+    GMAIL_TOKEN_FILE: "/run/secrets/gmail-token.json",
+  }).state, "ready");
+});
+
+test("gmail query builder preserves a custom read-only attachment query", () => {
+  assert.equal(
+    buildGmailImportQuery({ GMAIL_IMPORT_QUERY: "has:attachment filename:ledger.xlsx" }),
+    "has:attachment filename:ledger.xlsx",
+  );
+});
+
+test("gmail poller delegates each mock attachment through the deduplicating handoff", async () => {
+  const results = await pollGmailAttachmentsOnce({
+    adapter: { listAttachments: async (query) => {
+      assert.match(query, /filename:xlsx/);
+      return [attachment];
+    } },
+    query: buildGmailImportQuery({}),
+    wasProcessed: async () => false,
+    wasSourceFileProcessed: async () => false,
+    importAttachment: async () => ({ batchId: 7 }),
+  });
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "handed_off");
 });

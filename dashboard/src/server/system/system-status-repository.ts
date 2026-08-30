@@ -4,6 +4,7 @@ import {
   probeEtlHealth,
   type MirrorActivity,
 } from "./system-status";
+import { getGmailImportRuntimeStatus } from "../import/gmail-watcher";
 
 const DEFAULT_ETL_SERVICE_URL = "http://etl-service:8080";
 const ETL_HEALTH_TIMEOUT_MS = 2_000;
@@ -74,5 +75,16 @@ export async function getMirrorActivity(): Promise<MirrorActivity> {
 }
 
 export function getCurrentSystemStatus() {
-  return getSystemStatus({ checkEtlHealth, getMirrorActivity });
+  return getSystemStatus({
+    checkEtlHealth,
+    getMirrorActivity,
+    getGmailImportStatus: () => {
+      const status = getGmailImportRuntimeStatus();
+      return {
+        enabled: status.enabled,
+        state: status.state,
+        credentialsConfigured: status.credentialsConfigured,
+      };
+    },
+  });
 }

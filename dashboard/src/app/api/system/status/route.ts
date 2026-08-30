@@ -19,6 +19,11 @@ export async function GET() {
       },
       pendingSyncCount: null,
       pendingSyncSupported: false,
+      gmailImport: {
+        enabled: false,
+        state: "disabled",
+        credentialsConfigured: false,
+      },
     });
   }
 }

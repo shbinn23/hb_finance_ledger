@@ -11,6 +11,11 @@ export interface SystemStatusDependencies {
   checkEtlHealth: () => Promise<EtlStatus>;
   getMirrorActivity: () => Promise<MirrorActivity>;
   now?: () => Date;
+  getGmailImportStatus?: () => {
+    enabled: boolean;
+    state: "disabled" | "needs_credentials" | "ready";
+    credentialsConfigured: boolean;
+  };
 }
 
 export interface SystemStatus {
@@ -24,6 +29,11 @@ export interface SystemStatus {
   };
   pendingSyncCount: number | null;
   pendingSyncSupported: boolean;
+  gmailImport: {
+    enabled: boolean;
+    state: "disabled" | "needs_credentials" | "ready";
+    credentialsConfigured: boolean;
+  };
 }
 
 type HealthResponse = {
@@ -84,5 +94,10 @@ export async function getSystemStatus(
     },
     pendingSyncCount: mirror.pendingSyncCount,
     pendingSyncSupported: mirror.pendingSyncCount !== null,
+    gmailImport: dependencies.getGmailImportStatus?.() ?? {
+      enabled: false,
+      state: "disabled",
+      credentialsConfigured: false,
+    },
   };
 }

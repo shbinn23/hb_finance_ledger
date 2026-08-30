@@ -65,6 +65,11 @@ test("getSystemStatus keeps ETL and mirror state independent", async () => {
     },
     pendingSyncCount: 2,
     pendingSyncSupported: true,
+    gmailImport: {
+      enabled: false,
+      state: "disabled",
+      credentialsConfigured: false,
+    },
   });
 });
 
