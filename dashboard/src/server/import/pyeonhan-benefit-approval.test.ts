@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  approvePyeonhanBenefitCandidate,
+  type BenefitApprovalCandidate,
+  type BenefitApprovalDependencies,
+} from "./pyeonhan-benefit-approval.ts";
+
+function candidate(overrides: Partial<BenefitApprovalCandidate> = {}): BenefitApprovalCandidate {
+  return {
+    importRowId: 11,
+    benefitStatus: "rule_matched",
+    candidateRuleId: "shinhan_lady_lunch_5p",
+    sourceIdentityKey: "a".repeat(64),
+    occurrenceIndex: 1,
+    occurredDate: "2026-08-15",
+    item: "아워홈",
+    memo: "점심",
+    approvalAmount: 7700,
+    postingAmount: 7315,
+    discountAmount: 385,
+    mappedCardAccountType: "liabilities",
+    mappedCardAccountId: "x50",
+    matchedWhooingEntryId: 1429001,
+    mirrorEntry: {
+      sectionId: "s1",
+      entryId: 1429001,
+      entryDate: 20260815,
+      leftAccountType: "expenses",
+      leftAccountId: "x61",
+      rightAccountType: "liabilities",
+      rightAccountId: "x50",
+      amount: 7315,
+    },
+    rule: {
+      ruleId: "shinhan_lady_lunch_5p",
+      cardAccountType: "liabilities",
+      cardAccountId: "x50",
+      paymentChannel: null,
+      discountRateBps: 500,
+      performanceAmountPolicy: "approval_amount",
+    },
+    existingEventId: null,
+    ...overrides,
+  };
+}
+
+function dependencies(record = candidate()): BenefitApprovalDependencies & { statuses: string[] } {
+  const statuses: string[] = [];
+  return {
+    statuses,
+    getCandidate: async () => record,
+    createEvent: async (event) => {
+      assert.equal(event.approvalAmount, 7700);
+      assert.equal(event.performanceAmount, 7700);
+      assert.equal(event.postingAmount, 7315);
+      assert.equal(event.appliedDiscountAmount, 385);
+      assert.equal(event.whooingEntryId, 1429001);
+      return "event-created";
+    },
+    updateBenefitStatus: async ({ status }) => { statuses.push(status); },
+  };
+}
+
+test("benefit approval creates only a correctly separated event from server-side evidence", async () => {
+  const deps = dependencies();
+  const result = await approvePyeonhanBenefitCandidate({ importRowId: 11, ruleId: "shinhan_lady_lunch_5p" }, deps);
+
+  assert.deepEqual(result, {
+    ok: true,
+    status: "created",
+    benefitStatus: "created",
+    eventId: "event-created",
+    message: "카드혜택 event를 생성했습니다. 후잉 원장은 변경하지 않았습니다.",
+  });
+  assert.deepEqual(deps.statuses, ["approved", "created"]);
+});
+
+test("benefit approval rejects missing mirror evidence and card-rule mismatches", async () => {
+  const missing = dependencies(candidate({ mirrorEntry: null }));
+  const mismatch = dependencies(candidate({ rule: { ...candidate().rule, cardAccountId: "x45" } }));
+
+  assert.equal((await approvePyeonhanBenefitCandidate({ importRowId: 11, ruleId: "shinhan_lady_lunch_5p" }, missing)).status, "rejected");
+  assert.equal((await approvePyeonhanBenefitCandidate({ importRowId: 11, ruleId: "shinhan_lady_lunch_5p" }, mismatch)).status, "rejected");
+});
+
+test("benefit approval returns event_exists without inserting a duplicate", async () => {
+  let inserts = 0;
+  const deps = dependencies(candidate({ existingEventId: "event-existing" }));
+  deps.createEvent = async () => { inserts += 1; return "unexpected"; };
+
+  const result = await approvePyeonhanBenefitCandidate({ importRowId: 11, ruleId: "shinhan_lady_lunch_5p" }, deps);
+
+  assert.equal(result.status, "event_exists");
+  assert.equal(result.eventId, "event-existing");
+  assert.equal(inserts, 0);
+});
+
+test("benefit approval rejects client rule changes and invalid amount invariants", async () => {
+  const deps = dependencies(candidate({ discountAmount: 384 }));
+  const invalidAmounts = await approvePyeonhanBenefitCandidate({ importRowId: 11, ruleId: "shinhan_lady_lunch_5p" }, deps);
+  const invalidRule = await approvePyeonhanBenefitCandidate({ importRowId: 11, ruleId: "hana_mgs_subscription_50p" }, dependencies());
+
+  assert.equal(invalidAmounts.status, "rejected");
+  assert.equal(invalidRule.status, "rejected");
+});

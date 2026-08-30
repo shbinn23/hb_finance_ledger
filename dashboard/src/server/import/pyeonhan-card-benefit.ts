@@ -4,6 +4,9 @@ export interface PyeonhanCardBenefitCandidate {
   ruleId: string;
   label: string;
   reason: string;
+  discountRateBps: number;
+  performanceAmount: number;
+  confidence: number;
 }
 
 function compact(value: string | null | undefined) {
@@ -34,6 +37,9 @@ export function identifyPyeonhanCardBenefitCandidate(
       ruleId: "hana_mgs_subscription_50p",
       label: "하나 MG+S · 구독 50%",
       reason: "카드·구독 항목·정확한 50% 할인액이 일치합니다.",
+      discountRateBps: 5_000,
+      performanceAmount: transaction.approvalAmount,
+      confidence: 1,
     };
   }
 
@@ -44,6 +50,9 @@ export function identifyPyeonhanCardBenefitCandidate(
         ruleId: "shinhan_lady_lunch_5p",
         label: "신한 레이디 · 점심 5%",
         reason: "카드·식비 분류·정확한 5% 할인액이 일치합니다.",
+        discountRateBps: 500,
+        performanceAmount: transaction.approvalAmount,
+        confidence: 1,
       };
     }
     if (subcategory === "병원·약국" || subcategory === "병원/약국") {
@@ -51,6 +60,9 @@ export function identifyPyeonhanCardBenefitCandidate(
         ruleId: "shinhan_lady_medical_5p",
         label: "신한 레이디 · 병원/약국 5%",
         reason: "카드·병원/약국 분류·정확한 5% 할인액이 일치합니다.",
+        discountRateBps: 500,
+        performanceAmount: transaction.approvalAmount,
+        confidence: 1,
       };
     }
   }

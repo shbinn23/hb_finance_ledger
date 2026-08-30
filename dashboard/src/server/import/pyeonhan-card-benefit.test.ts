@@ -17,12 +17,15 @@ function transaction(overrides: Partial<NormalizedPyeonhanTransaction>): Normali
 }
 
 test("identifies exact MG+S subscription and Shinhan Lady lunch candidates", () => {
-  assert.equal(
-    identifyPyeonhanCardBenefitCandidate(transaction({}))?.ruleId,
-    "hana_mgs_subscription_50p",
-  );
-  assert.equal(
-    identifyPyeonhanCardBenefitCandidate(transaction({
+  assert.deepEqual(identifyPyeonhanCardBenefitCandidate(transaction({})), {
+    ruleId: "hana_mgs_subscription_50p",
+    label: "하나 MG+S · 구독 50%",
+    reason: "카드·구독 항목·정확한 50% 할인액이 일치합니다.",
+    discountRateBps: 5000,
+    performanceAmount: 7890,
+    confidence: 1,
+  });
+  assert.deepEqual(identifyPyeonhanCardBenefitCandidate(transaction({
       sourceAssetName: "신한 레이디",
       sourceCategoryName: "필수",
       sourceSubcategoryName: "식비",
@@ -31,9 +34,14 @@ test("identifies exact MG+S subscription and Shinhan Lady lunch candidates", () 
       postingAmount: 7315,
       approvalAmount: 7700,
       discountAmount: 385,
-    }))?.ruleId,
-    "shinhan_lady_lunch_5p",
-  );
+    })), {
+    ruleId: "shinhan_lady_lunch_5p",
+    label: "신한 레이디 · 점심 5%",
+    reason: "카드·식비 분류·정확한 5% 할인액이 일치합니다.",
+    discountRateBps: 500,
+    performanceAmount: 7700,
+    confidence: 1,
+  });
 });
 
 test("does not infer Shinhan lunch from rate and broad food category alone", () => {

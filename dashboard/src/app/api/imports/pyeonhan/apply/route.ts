@@ -5,6 +5,7 @@ import {
   finishImportBatch,
   finishImportRow,
   getLatestImportBatchForSourceFile,
+  importRowReferenceKey,
 } from "@/server/import/import-repository";
 import {
   applyAutoCreatableRows,
@@ -58,7 +59,10 @@ export async function POST(request: NextRequest) {
       rows: dryRun.rows,
       createEntry: createRuntimeDashboardLedgerEntry,
       onResult: async (row, writeResult) => {
-        const rowId = batch.rowIds.get(row.transaction.sourceIdentityKey);
+        const rowId = batch.rowIds.get(importRowReferenceKey(
+          row.transaction.sourceIdentityKey,
+          row.transaction.occurrenceIndex,
+        ));
         if (!rowId) return;
         await finishImportRow({
           rowId,

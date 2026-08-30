@@ -597,7 +597,7 @@ export async function buildCardBenefitMonthlyContext(benefitMonth: string, ruleI
 }
 
 export async function insertCardBenefitEvent(event: CardBenefitEventInsert) {
-  await query(
+  const result = await query<{ event_id: string }>(
     `
     insert into app.card_benefit_events (
       event_id,
@@ -626,7 +626,8 @@ export async function insertCardBenefitEvent(event: CardBenefitEventInsert) {
       $11, $12, $13, $14, $15,
       $16, $17, $18, $19, $20
     )
-    on conflict (idempotency_key) where idempotency_key is not null do nothing
+    on conflict do nothing
+    returning event_id::text
     `,
     [
       event.eventId ?? randomUUID(),
@@ -651,6 +652,7 @@ export async function insertCardBenefitEvent(event: CardBenefitEventInsert) {
       event.idempotencyKey ?? null,
     ],
   );
+  return result.rows[0]?.event_id ?? null;
 }
 
 export async function getCardBenefitMonthlyAssetsSummary(month?: string | null): Promise<CardBenefitAssetsSummary> {

@@ -180,7 +180,8 @@ test("reconciliation keeps discounts without an explicit rule and difference inc
   assert.equal(result.rows[0].status, "review_required");
   assert.match(result.rows[0].reason, /할인 rule/);
   assert.equal(result.rows[0].cardBenefitCandidate, null);
-  assert.equal(result.rows[1].status, "mapping_required");
+  assert.equal(result.rows[1].status, "review_required");
+  assert.match(result.rows[1].reason, /지원금\/쿠폰 처리 정책 필요/);
 });
 
 test("reconciliation exposes an exact card rule candidate but keeps it review-only", () => {
@@ -205,7 +206,77 @@ test("reconciliation exposes an exact card rule candidate but keeps it review-on
 
   assert.equal(result.rows[0].status, "review_required");
   assert.equal(result.rows[0].cardBenefitCandidate?.ruleId, "shinhan_lady_lunch_5p");
+  assert.equal(result.rows[0].cardBenefitStatus, "needs_review");
   assert.match(result.rows[0].reason, /신한 레이디 · 점심 5% 후보/);
+});
+
+test("reconciliation distinguishes matched, uncertain, and existing benefit events", () => {
+  const exact = transaction({
+    sourceAssetName: "신한 레이디",
+    sourceCategoryName: "필수",
+    sourceSubcategoryName: "식비",
+    item: "아워홈",
+    memo: "점심",
+    approvalAmount: 7700,
+    postingAmount: 7315,
+    discountAmount: 385,
+  });
+  const uncertain = transaction({
+    sourceIdentityKey: "identity-2",
+    approvalAmount: 10000,
+    postingAmount: 9000,
+    discountAmount: 1000,
+  });
+  const exactMirror = mirror({
+    entryId: 1428001,
+    leftAccountId: "x61",
+    rightAccountType: "liabilities",
+    rightAccountId: "x50",
+    item: "아워홈",
+    memo: "점심",
+    amount: 7315,
+  });
+  const result = reconcilePyeonhanTransactions({
+    transactions: [exact, uncertain],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "신한 레이디", accountType: "liabilities", accountId: "x50", confidence: 1 },
+      { mappingType: "expense_category", sourceKey: "필수 / 식비", accountType: "expenses", accountId: "x61", confidence: 1 },
+    ],
+    mirrorEntries: [exactMirror, mirror({ entryId: 1428002, benefitEventId: "event-1" })],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].cardBenefitStatus, "rule_matched");
+  assert.equal(result.rows[1].cardBenefitStatus, "event_exists");
+  assert.equal(result.summary.benefitCandidates, 1);
+  assert.equal(result.summary.benefitExisting, 1);
+});
+
+test("refund cashback and support coupon adjustment remain explicit review-only policies", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [
+      transaction({
+        entryType: "income",
+        sourceCategoryName: "환급",
+        sourceSubcategoryName: "캐시백",
+        sourceIdentityKey: "refund-1",
+      }),
+      transaction({
+        entryType: "difference_income",
+        item: "민생지원쿠폰 차액조정",
+        sourceIdentityKey: "coupon-1",
+      }),
+    ],
+    mappings,
+    mirrorEntries: [],
+    previousRows: [],
+  });
+
+  assert.deepEqual(result.rows.map((row) => row.status), ["review_required", "review_required"]);
+  assert.match(result.rows[0].reason, /수입 의미가 섞여 있어 수동 정책 필요/);
+  assert.match(result.rows[1].reason, /balance adjustment.*지원금\/쿠폰 처리 정책 필요/);
+  assert.equal(result.summary.autoCreatable, 0);
 });
 
 test("discount review rows retain matching mirror evidence", () => {

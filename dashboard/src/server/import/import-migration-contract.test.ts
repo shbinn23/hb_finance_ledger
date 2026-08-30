@@ -12,6 +12,10 @@ const importTables = readFileSync(
   resolve(migrationRoot, "005_create_pyeonhan_import_tables.sql"),
   "utf8",
 );
+const importBenefitReview = readFileSync(
+  resolve(migrationRoot, "007_add_import_benefit_review.sql"),
+  "utf8",
+);
 const importRepository = readFileSync(
   resolve(import.meta.dirname, "import-repository.ts"),
   "utf8",
@@ -55,4 +59,15 @@ test("import mappings constrain account types by mapping responsibility", () => 
 test("prior import reconciliation only trusts rows backed by ledger evidence", () => {
   assert.match(importRepository, /status in \('created', 'duplicate'\)/);
   assert.match(importRepository, /row_id = excluded\.row_id/);
+});
+
+test("benefit review migration is additive, transactional, and links import rows to events", () => {
+  assert.match(importBenefitReview, /^begin;/i);
+  assert.match(importBenefitReview, /add column if not exists benefit_status text/);
+  assert.match(importBenefitReview, /benefit_status in \([\s\S]*'rule_matched'[\s\S]*'event_exists'[\s\S]*'created'/);
+  assert.match(importBenefitReview, /add column if not exists benefit_rule_id text/);
+  assert.match(importBenefitReview, /add column if not exists benefit_confidence numeric\(4,3\)/);
+  assert.match(importBenefitReview, /add column if not exists benefit_event_id uuid/);
+  assert.match(importBenefitReview, /references app\.card_benefit_events\(event_id\)/);
+  assert.match(importBenefitReview, /commit;\s*$/i);
 });

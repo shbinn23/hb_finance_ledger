@@ -13,6 +13,17 @@ export type ImportReconciliationStatus =
   | "conflict"
   | "review_required";
 
+export type ImportBenefitStatus =
+  | "not_applicable"
+  | "rule_matched"
+  | "rule_uncertain"
+  | "event_exists"
+  | "needs_review"
+  | "approved"
+  | "skipped"
+  | "created"
+  | "failed";
+
 export interface ImportMapping {
   mappingType: "asset" | "expense_category" | "income_category";
   sourceKey: string;
@@ -31,6 +42,7 @@ export interface MirrorEntry {
   item: string;
   memo: string;
   amount: number;
+  benefitEventId?: string | null;
 }
 
 export interface PreviousImportRow {
@@ -56,6 +68,7 @@ export interface ReconciledImportRow {
   matchedWhooingEntryId: number | null;
   mapping: ResolvedImportMapping;
   cardBenefitCandidate: PyeonhanCardBenefitCandidate | null;
+  cardBenefitStatus: ImportBenefitStatus;
 }
 
 export interface ImportMappingGap {
@@ -77,6 +90,9 @@ export interface PyeonhanReconciliationResult {
     possibleUpdates: number;
     possibleDeletes: number;
     conflicts: number;
+    benefitCandidates: number;
+    benefitUncertain: number;
+    benefitExisting: number;
   };
 }
 
@@ -125,6 +141,17 @@ function mappingGap(
   }
   if ((transaction.entryType === "expense" || transaction.entryType === "income") && !mapping.categoryAccount) {
     return "카테고리 매핑이 필요합니다.";
+  }
+  return null;
+}
+
+function manualReviewReason(transaction: NormalizedPyeonhanTransaction) {
+  const category = normalize(`${transaction.sourceCategoryName ?? ""} ${transaction.sourceSubcategoryName ?? ""}`);
+  if (/(환급|캐시백)/.test(category)) {
+    return "환급/캐시백은 수입 의미가 섞여 있어 수동 정책 필요 상태로 유지합니다.";
+  }
+  if (transaction.entryType === "difference_income" || /민생지원쿠폰/.test(transaction.item)) {
+    return "민생지원쿠폰 차액조정은 balance adjustment 또는 지원금/쿠폰 처리 정책 필요 상태입니다.";
   }
   return null;
 }
@@ -232,6 +259,7 @@ function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
     matchedWhooingEntryId: previous.matchedWhooingEntryId,
     mapping: emptyMapping(),
     cardBenefitCandidate: null,
+    cardBenefitStatus: "not_applicable",
   };
 }
 
@@ -272,7 +300,12 @@ export function reconcilePyeonhanTransactions({
       matchedWhooingEntryId: null,
       mapping,
       cardBenefitCandidate,
+      cardBenefitStatus: transaction.discountAmount > 0
+        ? cardBenefitCandidate ? "needs_review" : "rule_uncertain"
+        : "not_applicable",
     };
+    const manualReason = manualReviewReason(transaction);
+    if (manualReason) return { ...base, status: "review_required", reason: manualReason };
     const gap = mappingGap(transaction, mapping);
     if (gap) return { ...base, status: "mapping_required", reason: gap };
     if (transaction.entryType === "transfer" && !transaction.transferPairComplete) {
@@ -327,6 +360,13 @@ export function reconcilePyeonhanTransactions({
       if (similarMirror) usedMirrorIds.add(similarMirror.entryId);
       return {
         ...base,
+        cardBenefitStatus: similarMirror?.benefitEventId
+          ? "event_exists"
+          : cardBenefitCandidate && similarMirror
+            ? "rule_matched"
+            : cardBenefitCandidate
+              ? "needs_review"
+              : "rule_uncertain",
         reason: cardBenefitCandidate
           ? `카드혜택 ${cardBenefitCandidate.label} 후보입니다. 자동 등록 전 확인이 필요합니다.`
           : "할인 rule을 확정할 수 없어 자동 등록하지 않습니다.",
@@ -388,6 +428,9 @@ export function reconcilePyeonhanTransactions({
       possibleUpdates: count("possible_update"),
       possibleDeletes: possibleDeletes.length,
       conflicts: count("conflict"),
+      benefitCandidates: rows.filter((row) => row.cardBenefitStatus === "rule_matched").length,
+      benefitUncertain: rows.filter((row) => row.cardBenefitStatus === "rule_uncertain" || row.cardBenefitStatus === "needs_review").length,
+      benefitExisting: rows.filter((row) => row.cardBenefitStatus === "event_exists").length,
     },
   };
 }

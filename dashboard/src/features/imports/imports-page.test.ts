@@ -17,9 +17,15 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /수정·삭제 후보는 표시만 하며 자동 반영하지 않습니다/);
   assert.match(source, /window\.confirm/);
   assert.match(source, /migration 미적용 상태/);
-  assert.match(source, /현재 Gmail 자동 감지는 설정 전입니다/);
   assert.match(source, /매핑 상태/);
   assert.match(source, /승인금액/);
   assert.match(source, /할인액/);
   assert.match(source, /카드혜택 후보/);
+  assert.match(source, /카드혜택 후보 승인/);
+  assert.match(source, /검토 batch 저장/);
+  assert.match(source, /후잉 원장은 수정하지 않고 app\.card_benefit_events만 생성합니다/);
+  assert.match(source, /원장 수정 없음, 카드혜택 event만 생성/);
+  assert.match(source, /수입 의미가 섞여 있어 수동 정책 필요/);
+  assert.match(source, /자동 삭제는 수행하지 않음/);
+  assert.match(source, /Gmail 자동 감지/);
 });

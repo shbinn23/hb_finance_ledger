@@ -1170,7 +1170,7 @@ a {
 
 .import-summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
   gap: var(--page-main-gap);
 }
 
@@ -1189,6 +1189,36 @@ a {
 
 .import-table {
   min-width: 72rem;
+}
+
+.import-benefit-table {
+  min-width: 108rem;
+}
+
+.import-benefit-table td small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--ink-muted);
+}
+
+.import-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.import-actions select {
+  min-height: 2.25rem;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--ink-secondary);
+  padding: 0 0.7rem;
+}
+
+.import-policy-note {
+  border-color: var(--hairline-strong);
+  background: var(--canvas-soft);
 }
 
 .import-table td small {
