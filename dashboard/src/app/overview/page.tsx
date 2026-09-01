@@ -34,7 +34,7 @@ export default async function OverviewPage() {
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
-          <SpendingChart data={model.spending} />
+          <SpendingChart data={model.spending} monthLabel={model.monthLabel} />
           <TransactionTable rows={model.transactions} />
         </div>
         <aside className="dashboard-side">

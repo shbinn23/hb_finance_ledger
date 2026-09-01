@@ -12,6 +12,7 @@ test("overview spending chart exposes actual-adjusted ML projection", () => {
   const spendingSource = readFileSync(resolve(__dirname, "../../lib/financial-analysis/spending-series.ts"), "utf8");
   const typeSource = readFileSync(resolve(__dirname, "types.ts"), "utf8");
   const chartSource = readFileSync(resolve(__dirname, "components/spending-chart.tsx"), "utf8");
+  const pageSource = readFileSync(resolve(__dirname, "../../app/overview/page.tsx"), "utf8");
   const tooltipSource = readFileSync(resolve(__dirname, "../../components/charts/forecast-tooltip.tsx"), "utf8");
 
   assert.match(typeSource, /actualProjection: number \| null/);
@@ -21,6 +22,10 @@ test("overview spending chart exposes actual-adjusted ML projection", () => {
   assert.match(spendingSource, /actualAtObservedDay \+ \(point\.projected - mlAtObservedDay\)/);
   assert.match(chartSource, /dataKey="actualProjection"/);
   assert.match(chartSource, /실지출 예상/);
+  assert.match(chartSource, /monthLabel: string/);
+  assert.match(chartSource, /\{monthLabel\} 지출 진행률/);
+  assert.doesNotMatch(chartSource, /5월 지출 진행률/);
+  assert.match(pageSource, /<SpendingChart data=\{model\.spending\} monthLabel=\{model\.monthLabel\}/);
   assert.match(tooltipSource, /현재 실제 지출에 ML 잔여 예측을 더한 값/);
   assert.match(tooltipSource, /showActualProjection/);
   assert.match(tooltipSource, /point\.actual === null/);

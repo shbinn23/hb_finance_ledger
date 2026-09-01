@@ -16,15 +16,16 @@ import type { SpendingPoint } from "../types";
 
 interface SpendingChartProps {
   data: SpendingPoint[];
+  monthLabel: string;
 }
 
-export function SpendingChart({ data }: SpendingChartProps) {
+export function SpendingChart({ data, monthLabel }: SpendingChartProps) {
   return (
     <div className="chart-frame">
       <div className="section-heading">
         <div>
           <p className="eyebrow compact">Monthly Flow</p>
-          <h2>5월 지출 진행률</h2>
+          <h2>{monthLabel} 지출 진행률</h2>
         </div>
         <div className="legend">
           <span><i className="legend-actual" /> 현재</span>
