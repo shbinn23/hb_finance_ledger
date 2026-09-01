@@ -6,6 +6,7 @@ import {
   parseImportCreateRequest,
   parseImportDeleteRequest,
   parseImportBenefitRequest,
+  parseImportBenefitSelectionRequest,
   parseImportAccountCreateRequest,
   parseImportMappingRequest,
   parseImportRowActionRequest,
@@ -113,6 +114,24 @@ test("benefit approval requires confirmation, row id, and rule id", () => {
   });
   assert.equal(parseImportBenefitRequest({ importRowId: 8, ruleId: "rule-1" }).ok, false);
   assert.equal(parseImportBenefitRequest({ confirmed: true, importRowId: 8, ruleId: "" }).ok, false);
+});
+
+test("benefit selection requires an explicit supported action", () => {
+  assert.deepEqual(parseImportBenefitSelectionRequest({
+    confirmed: true,
+    importRowId: 8,
+    selectedRuleId: "rule-1",
+    action: "register_and_apply",
+  }), {
+    ok: true,
+    value: { importRowId: 8, selectedRuleId: "rule-1", action: "register_and_apply" },
+  });
+  assert.equal(parseImportBenefitSelectionRequest({
+    confirmed: true, importRowId: 8, selectedRuleId: "rule-1", action: "delete",
+  }).ok, false);
+  assert.equal(parseImportBenefitSelectionRequest({
+    importRowId: 8, selectedRuleId: "rule-1", action: "benefit_only",
+  }).ok, false);
 });
 
 test("account creation requires approval and a compatible mapping type", () => {

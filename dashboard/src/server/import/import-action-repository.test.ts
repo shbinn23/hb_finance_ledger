@@ -36,6 +36,17 @@ test("schema capability fails closed until migration 008 columns exist", () => {
   assert.match(source, /column_name in \('mapping_type', 'source_key'\)/);
 });
 
+test("benefit review capability fails closed until selection statuses exist", () => {
+  assert.match(source, /import_rows_benefit_status_check/);
+  assert.match(source, /rule_selection_required/);
+  assert.match(source, /rule_unknown/);
+});
+
+test("created import rows retain the linked Whooing entry for benefit approval", () => {
+  assert.match(source, /matched_whooing_entry_id = case[\s\S]*when \$2 = 'created' then \$3/);
+  assert.match(source, /export async function saveImportBenefitRuleSelection/);
+});
+
 test("reused import batches refresh only non-terminal reconciliation state", () => {
   assert.match(source, /export async function refreshImportReviewBatch/);
   assert.match(source, /status not in \('created', 'updated', 'deleted', 'skipped', 'reviewed', 'write_failed'\)/);

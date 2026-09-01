@@ -12,7 +12,18 @@ type ImportStatus = "auto_creatable" | "duplicate" | "mapping_required" | "possi
 type ImportViewFilter = "all" | "new" | "update" | "transfer" | "mapping"
   | "benefit" | "review" | "duplicate";
 type BenefitStatus = "not_applicable" | "rule_matched" | "rule_uncertain" | "event_exists"
-  | "needs_review" | "approved" | "skipped" | "created" | "failed";
+  | "rule_selection_required" | "rule_unknown" | "needs_review" | "approved"
+  | "pending" | "skipped" | "created" | "failed";
+
+interface BenefitCandidate {
+  ruleId: string;
+  label: string;
+  reason: string;
+  discountRateBps: number;
+  performanceAmount: number;
+  confidence: number;
+  matchKind?: "exact" | "cap_limited";
+}
 
 interface DryRunRow {
   importRowId?: number | null;
@@ -47,14 +58,8 @@ interface DryRunRow {
   }>;
   cardBenefitStatus: BenefitStatus;
   benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
-  cardBenefitCandidate: {
-    ruleId: string;
-    label: string;
-    reason: string;
-    discountRateBps: number;
-    performanceAmount: number;
-    confidence: number;
-  } | null;
+  cardBenefitCandidate: BenefitCandidate | null;
+  cardBenefitCandidates?: BenefitCandidate[];
 }
 
 interface DryRunResult {
@@ -180,9 +185,12 @@ const benefitLabels: Record<BenefitStatus, { label: string; tone: "stable" | "wa
   not_applicable: { label: "해당 없음", tone: "neutral" },
   rule_matched: { label: "rule 확정", tone: "stable" },
   rule_uncertain: { label: "rule 불확실", tone: "watch" },
+  rule_selection_required: { label: "rule 선택 필요", tone: "watch" },
+  rule_unknown: { label: "rule 미지정", tone: "watch" },
   event_exists: { label: "event 존재", tone: "neutral" },
   needs_review: { label: "근거 확인 필요", tone: "watch" },
   approved: { label: "승인 처리 중", tone: "watch" },
+  pending: { label: "혜택 반영 대기", tone: "watch" },
   skipped: { label: "건너뜀", tone: "neutral" },
   created: { label: "event 생성", tone: "stable" },
   failed: { label: "생성 실패", tone: "over" },
@@ -217,6 +225,7 @@ export function ImportsPage() {
   const [result, setResult] = useState<DryRunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyBenefitRowId, setBusyBenefitRowId] = useState<number | null>(null);
+  const [selectedBenefitRules, setSelectedBenefitRules] = useState<Record<number, string>>({});
   const [gmailBusy, setGmailBusy] = useState(false);
   const [busyMappingKey, setBusyMappingKey] = useState("");
   const [message, setMessage] = useState("");
@@ -513,24 +522,42 @@ export function ImportsPage() {
   }
 
   async function approveBenefit(row: DryRunRow) {
-    if (!row.importRowId || !row.cardBenefitCandidate || !window.confirm(
-      "후잉 원장은 수정하지 않고 app.card_benefit_events만 생성합니다. 승인금액, 매입금액, 할인금액, 실적금액이 분리 저장됩니다. 진행할까요?",
-    )) return;
+    if (!row.importRowId) return;
+    const candidates = row.cardBenefitCandidates ?? (row.cardBenefitCandidate ? [row.cardBenefitCandidate] : []);
+    const selectedRuleId = selectedBenefitRules[row.importRowId]
+      ?? (candidates.length === 1 ? candidates[0].ruleId : "");
+    if (!selectedRuleId) {
+      setMessage("반영할 카드혜택 rule을 선택해 주세요.");
+      return;
+    }
+    const action = row.matchedWhooingEntryId ? "benefit_only" : "register_and_apply";
+    const confirmation = action === "benefit_only"
+      ? "후잉 원장은 수정하지 않고 app.card_benefit_events에 혜택만 반영합니다. 진행할까요?"
+      : "Whooing 원장에는 매입금액을 등록하고 app.card_benefit_events에는 승인·실적·매입·할인을 분리 저장합니다. 진행할까요?";
+    if (!window.confirm(confirmation)) return;
     setBusyBenefitRowId(row.importRowId);
     setMessage("");
     try {
-      const response = await fetch("/api/imports/benefit-events", {
+      const response = await fetch("/api/imports/benefit-candidates/select-rule", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ importRowId: row.importRowId, ruleId: row.cardBenefitCandidate.ruleId, confirmed: true }),
+        body: JSON.stringify({ importRowId: row.importRowId, selectedRuleId, action, confirmed: true }),
       });
-      const payload = await response.json() as { benefitStatus?: BenefitStatus; message?: string };
+      const payload = await response.json() as {
+        benefitStatus?: BenefitStatus;
+        ledgerStatus?: "created" | "existing" | "not_started";
+        message?: string;
+      };
       setMessage(payload.message ?? "카드혜택 승인 요청을 처리했습니다.");
       if (payload.benefitStatus) {
         setResult((current) => current ? {
           ...current,
           rows: current.rows.map((candidate) => candidate.importRowId === row.importRowId
-            ? { ...candidate, cardBenefitStatus: payload.benefitStatus ?? candidate.cardBenefitStatus }
+            ? {
+              ...candidate,
+              status: payload.ledgerStatus === "created" ? "created" : candidate.status,
+              cardBenefitStatus: payload.benefitStatus ?? candidate.cardBenefitStatus,
+            }
             : candidate),
         } : current);
       }
@@ -728,14 +755,14 @@ export function ImportsPage() {
             && result.summary.benefitAmountMismatches === 0 ? (
               <div className="import-feedback" role="status">
                 <strong>현재 추가로 승인할 카드혜택 후보는 없습니다.</strong>
-                <p>감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다. 신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다.</p>
+                <p>감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다. 신규 할인 후보는 카드와 실제 할인율에 따라 확정 또는 rule 선택 필요 상태로 표시됩니다.</p>
               </div>
             ) : null}
 
           {benefitRows.length > 0 ? (
             <Card className="transaction-panel">
               <CardHeader>
-                <CardDescription>원장 수정 없음, 카드혜택 event만 생성</CardDescription>
+                <CardDescription>기존 거래는 혜택만, 신규 거래는 매입금액 원장 등록 후 혜택 반영</CardDescription>
                 <div className="metric-card-top">
                   <CardTitle>카드혜택 후보 승인</CardTitle>
                   <Button
@@ -749,7 +776,7 @@ export function ImportsPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <p className="metric-detail">rule 확정 후보만 단건 승인할 수 있습니다. 불확실 할인은 자동 event 생성 대상이 아닙니다.</p>
+                <p className="metric-detail">할인은 승인금액과 매입금액의 차이로 감지합니다. 활성 rule 후보가 여러 개면 선택하고, 후보가 없어도 원장 등록은 별도로 진행할 수 있습니다.</p>
                 {benefitRuleSummary.length > 0 ? (
                   <div className="import-mapping-list">
                     {benefitRuleSummary.map((rule) => (
@@ -771,8 +798,13 @@ export function ImportsPage() {
                     <tbody>
                       {benefitRows.map((row) => {
                         const benefit = benefitLabels[row.cardBenefitStatus];
-                        const canApprove = row.cardBenefitStatus === "rule_matched"
-                          && Boolean(row.importRowId && row.matchedWhooingEntryId && row.cardBenefitCandidate);
+                        const candidates = row.cardBenefitCandidates
+                          ?? (row.cardBenefitCandidate ? [row.cardBenefitCandidate] : []);
+                        const selectedRuleId = row.importRowId
+                          ? selectedBenefitRules[row.importRowId] ?? (candidates.length === 1 ? candidates[0].ruleId : "")
+                          : "";
+                        const canApprove = candidates.length > 0
+                          && Boolean(row.importRowId && (row.matchedWhooingEntryId || row.status === "auto_creatable"));
                         return (
                           <tr key={`benefit-${row.transaction.sourceRowIndexes.join("-")}-${row.transaction.item}`}>
                             <td>{row.transaction.occurredDate}</td>
@@ -784,14 +816,28 @@ export function ImportsPage() {
                             <td className="amount">{won(row.transaction.approvalAmount)}</td>
                             <td className="amount">{won(row.transaction.postingAmount)}</td>
                             <td className="amount">{won(row.transaction.discountAmount)}</td>
-                            <td className="amount">{row.cardBenefitCandidate ? won(row.cardBenefitCandidate.performanceAmount) : "-"}</td>
-                            <td>{row.cardBenefitCandidate ? `${row.cardBenefitCandidate.discountRateBps / 100}%` : "-"}</td>
-                            <td>{row.cardBenefitCandidate?.label ?? "확정 불가"}</td>
-                            <td>{row.cardBenefitCandidate ? `${Math.round(row.cardBenefitCandidate.confidence * 100)}%` : "-"}</td>
+                            <td className="amount">{candidates[0] ? won(candidates[0].performanceAmount) : "-"}</td>
+                            <td>{candidates.length > 0 ? [...new Set(candidates.map((candidate) => `${candidate.discountRateBps / 100}%`))].join(", ") : "-"}</td>
+                            <td>{candidates.length > 0 ? (
+                              <select
+                                value={selectedRuleId}
+                                aria-label={`${row.transaction.item} 카드혜택 rule`}
+                                onChange={(event) => row.importRowId && setSelectedBenefitRules((current) => ({
+                                  ...current,
+                                  [row.importRowId as number]: event.target.value,
+                                }))}
+                              >
+                                {candidates.length > 1 ? <option value="">rule 선택 필요</option> : null}
+                                {candidates.map((candidate) => (
+                                  <option key={candidate.ruleId} value={candidate.ruleId}>{candidate.label}</option>
+                                ))}
+                              </select>
+                            ) : <><strong>적합한 활성 rule 없음</strong><small>원장만 등록 가능</small></>}</td>
+                            <td>{candidates.length === 1 ? `${Math.round(candidates[0].confidence * 100)}%` : candidates.length > 1 ? `${candidates.length}개 후보` : "-"}</td>
                             <td><Badge tone={benefit.tone}>{benefit.label}</Badge></td>
-                            <td><Button size="sm" disabled={!canApprove || busyBenefitRowId === row.importRowId || dryRunOnly || !actionExecutionSupported} onClick={() => approveBenefit(row)}>
+                            <td><Button size="sm" disabled={!canApprove || !selectedRuleId || busyBenefitRowId === row.importRowId || dryRunOnly || !actionExecutionSupported} onClick={() => approveBenefit(row)}>
                               {row.cardBenefitStatus === "created" || row.cardBenefitStatus === "event_exists"
-                                ? "생성 완료" : !result.batchId ? "검토 저장 필요" : "event 승인"}
+                                ? "생성 완료" : !result.batchId ? "검토 저장 필요" : row.matchedWhooingEntryId ? "혜택만 반영" : "선택 후 반영"}
                             </Button></td>
                           </tr>
                         );

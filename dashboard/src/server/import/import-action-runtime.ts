@@ -13,10 +13,13 @@ import {
   hasCardBenefitEventForWhooingEntry,
   markImportRowsReviewed,
   reserveImportActionOperation,
+  saveImportBenefitRuleSelection,
 } from "./import-repository";
 import { syncWhooingEntriesForDate } from "../whooing/sync-client";
 import { deleteWhooingEntry, getWhooingEntry, updateWhooingEntry } from "../whooing/write-client";
 import { executeRuntimePyeonhanBenefitCandidate } from "./pyeonhan-benefit-runtime";
+import { getActiveCardBenefitRules } from "../card-benefits/repository";
+import { executeImportBenefitSelection } from "./import-benefit-selection";
 
 const dependencies = {
   getRows: getImportActionRows,
@@ -30,6 +33,20 @@ const dependencies = {
 
 export function executeRuntimeApprovedImportCreates(rowIds: number[]) {
   return executeApprovedImportCreates({ rowIds, dependencies });
+}
+
+export function executeRuntimeImportBenefitSelection(input: {
+  importRowId: number;
+  selectedRuleId: string;
+  action: "register_and_apply" | "benefit_only";
+}) {
+  return executeImportBenefitSelection(input, {
+    getRow: async (rowId) => (await getImportActionRows([rowId]))[0] ?? null,
+    getRules: getActiveCardBenefitRules,
+    saveSelection: saveImportBenefitRuleSelection,
+    executeCreates: executeRuntimeApprovedImportCreates,
+    executeBenefit: executeRuntimePyeonhanBenefitCandidate,
+  });
 }
 
 export function executeRuntimeImportReviewAction(input: {

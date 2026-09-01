@@ -179,3 +179,37 @@ test("benefit approval rejects a mirror transaction with a different item", asyn
 
   assert.equal(result.status, "rejected");
 });
+
+test("benefit approval stores an observed cap-limited discount below the theoretical amount", async () => {
+  const record = candidate({
+    approvalAmount: 159000,
+    postingAmount: 158167,
+    discountAmount: 833,
+    mirrorEntry: {
+      ...candidate().mirrorEntry!,
+      amount: 158167,
+    },
+    rule: {
+      ...candidate().rule,
+      discountRateBps: 1000,
+      hasMonthlyCap: true,
+    },
+  });
+  const deps = dependencies(record);
+  let inserted: { eligibleDiscountAmount: number; appliedDiscountAmount: number } | null = null;
+  deps.createEvent = async (event) => {
+    inserted = event;
+    return "event-cap";
+  };
+
+  const result = await approvePyeonhanBenefitCandidate(
+    { importRowId: 11, ruleId: "shinhan_lady_lunch_5p" },
+    deps,
+  );
+
+  assert.equal(result.status, "created");
+  assert.deepEqual(inserted && {
+    eligibleDiscountAmount: inserted.eligibleDiscountAmount,
+    appliedDiscountAmount: inserted.appliedDiscountAmount,
+  }, { eligibleDiscountAmount: 15900, appliedDiscountAmount: 833 });
+});

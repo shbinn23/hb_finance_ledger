@@ -54,6 +54,13 @@ export async function getImportSchemaStatus(): Promise<ImportSchemaStatus> {
         where table_schema = 'app'
           and table_name = 'import_rows'
           and column_name = 'benefit_status'
+      ) and exists (
+        select 1
+        from pg_constraint
+        where connamespace = 'app'::regnamespace
+          and conname = 'import_rows_benefit_status_check'
+          and pg_get_constraintdef(oid) like '%rule_selection_required%'
+          and pg_get_constraintdef(oid) like '%rule_unknown%'
       ) as benefit_review,
       (
         select count(*) = 2
@@ -842,6 +849,7 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
     rule_card_account_id: string;
     payment_channel: "general" | "simple_pay" | null;
     discount_rate_bps: number;
+    has_monthly_cap: boolean;
     performance_amount_policy: string | null;
     existing_event_id: string | null;
     existing_event_whooing_entry_id: string | null;
@@ -867,6 +875,7 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
       rule.rule_id, rule.card_account_type as rule_card_account_type,
       rule.card_account_id as rule_card_account_id, rule.payment_channel,
       rule.discount_rate_bps,
+      jsonb_array_length(rule.monthly_cap_tiers) > 0 as has_monthly_cap,
       rule.performance_policy ->> 'performanceAmountPolicy' as performance_amount_policy,
       existing.event_id::text as existing_event_id,
       existing.whooing_entry_id::text as existing_event_whooing_entry_id,
@@ -939,6 +948,7 @@ export async function getBenefitApprovalCandidate(importRowId: number): Promise<
       cardAccountId: row.rule_card_account_id,
       paymentChannel: row.payment_channel,
       discountRateBps: row.discount_rate_bps,
+      hasMonthlyCap: row.has_monthly_cap,
       performanceAmountPolicy: row.performance_amount_policy === "posting_amount"
         ? "posting_amount"
         : "approval_amount",
@@ -980,6 +990,22 @@ export async function updateImportBenefitStatus(input: {
     where id = $1
     `,
     [input.importRowId, input.status, input.eventId ?? null, input.reason],
+  );
+}
+
+export async function saveImportBenefitRuleSelection(input: {
+  rowId: number;
+  ruleId: string;
+  reason: string;
+}) {
+  await query(
+    `
+    update app.import_rows
+    set benefit_status = 'rule_matched', benefit_rule_id = $2,
+        benefit_confidence = 1, benefit_reason = $3, updated_at = now()
+    where id = $1
+    `,
+    [input.rowId, input.ruleId, input.reason],
   );
 }
 
@@ -1386,6 +1412,7 @@ export async function finishImportActionOperation(input: {
       set status = $2,
           created_whooing_entry_id = case when $2 = 'created' then $3 else created_whooing_entry_id end,
           matched_whooing_entry_id = case
+            when $2 = 'created' then $3
             when $2 = 'updated' then $3
             when $2 = 'deleted' then null
             else matched_whooing_entry_id

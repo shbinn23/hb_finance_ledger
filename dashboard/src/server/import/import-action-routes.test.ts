@@ -65,3 +65,12 @@ test("mapping and benefit mutations share origin, confirmation, and operation sa
   assert.match(benefit, /importWritesAreDryRunOnly/);
   assert.match(benefit, /executeRuntimePyeonhanBenefitCandidate/);
 });
+
+test("benefit rule selection route reuses standard write safeguards and runtime validation", () => {
+  const selection = readFileSync(resolve(app, "benefit-candidates/select-rule/route.ts"), "utf8");
+  assert.match(selection, /parseImportBenefitSelectionRequest/);
+  assert.match(selection, /importActionOriginIsAllowed/);
+  assert.match(selection, /importWritesAreDryRunOnly/);
+  assert.match(selection, /getImportSchemaStatus/);
+  assert.match(selection, /executeRuntimeImportBenefitSelection/);
+});

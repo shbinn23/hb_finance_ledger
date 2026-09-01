@@ -24,6 +24,7 @@ export interface BenefitApprovalRule {
   cardAccountId: string;
   paymentChannel: "general" | "simple_pay" | null;
   discountRateBps: number;
+  hasMonthlyCap?: boolean;
   performanceAmountPolicy: "approval_amount" | "posting_amount";
 }
 
@@ -169,7 +170,11 @@ export async function approvePyeonhanBenefitCandidate(
     return rejected("선택한 카드혜택 rule이 거래 카드와 일치하지 않습니다.");
   }
   const eligibleDiscountAmount = Math.floor(candidate.approvalAmount * rule.discountRateBps / 10_000);
-  if (eligibleDiscountAmount !== candidate.discountAmount) {
+  const exactDiscount = eligibleDiscountAmount === candidate.discountAmount;
+  const capLimitedDiscount = Boolean(rule.hasMonthlyCap)
+    && candidate.discountAmount > 0
+    && candidate.discountAmount < eligibleDiscountAmount;
+  if (!exactDiscount && !capLimitedDiscount) {
     return rejected("저장된 할인액이 선택한 rule의 할인율과 일치하지 않습니다.");
   }
 

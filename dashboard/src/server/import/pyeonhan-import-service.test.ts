@@ -39,6 +39,7 @@ function row(overrides: Partial<AutoImportRow> = {}): AutoImportRow {
     reason: "new",
     matchedWhooingEntryId: null,
     cardBenefitCandidate: null,
+    cardBenefitCandidates: [],
     cardBenefitStatus: "not_applicable",
     benefitEventIntegrity: "not_applicable",
     changes: [],
@@ -82,6 +83,33 @@ test("auto import creates only auto-creatable rows with deterministic operation 
   assert.equal(requests[0].type, "expense");
   assert.equal(result.created, 1);
   assert.equal(result.skipped, 2);
+});
+
+test("unknown benefit rules do not block posting-amount ledger creation", async () => {
+  const requests: DashboardLedgerEntryRequest[] = [];
+  const discounted = row({
+    transaction: transaction({
+      sourceAssetName: "하나 MG+S",
+      postingAmount: 22725,
+      approvalAmount: 25250,
+      discountAmount: 2525,
+    }),
+    cardBenefitStatus: "rule_unknown",
+  });
+
+  await applyAutoCreatableRows({
+    rows: [discounted],
+    createEntry: async (request) => {
+      requests.push(request);
+      return success;
+    },
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].amount, 22725);
+  assert.equal(requests[0].type, "expense");
+  if (requests[0].type !== "expense") assert.fail("expected expense request");
+  assert.equal(requests[0].discountRuleId, null);
 });
 
 test("auto import maps income and transfer directions to dashboard ledger requests", async () => {

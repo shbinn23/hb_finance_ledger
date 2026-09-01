@@ -78,6 +78,28 @@ export function parseImportBenefitRequest(value: unknown): ParseResult<{
   return { ok: true, value: { importRowId, ruleId } };
 }
 
+export function parseImportBenefitSelectionRequest(value: unknown): ParseResult<{
+  importRowId: number;
+  selectedRuleId: string;
+  action: "register_and_apply" | "benefit_only";
+}> {
+  if (!value || typeof value !== "object") return { ok: false, error: "invalid_request" };
+  const input = value as Record<string, unknown>;
+  if (input.confirmed !== true) return { ok: false, error: "confirmation_required" };
+  const importRowId = Number(input.importRowId);
+  const selectedRuleId = typeof input.selectedRuleId === "string" ? input.selectedRuleId.trim() : "";
+  const action = input.action;
+  if (
+    !Number.isSafeInteger(importRowId)
+    || importRowId <= 0
+    || !selectedRuleId
+    || (action !== "register_and_apply" && action !== "benefit_only")
+  ) {
+    return { ok: false, error: "invalid_benefit_selection" };
+  }
+  return { ok: true, value: { importRowId, selectedRuleId, action } };
+}
+
 export function parseImportReviewRequest(value: unknown): ParseResult<{
   importRowIds: number[];
   action: "skip" | "review";

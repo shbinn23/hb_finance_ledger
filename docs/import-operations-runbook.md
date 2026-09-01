@@ -142,7 +142,7 @@ updated, skipped, reviewed, and failed rows retain their audit state and operati
 
 ## Safe automatic operation
 
-Use these flags only after migrations through `010_add_import_delete_operations.sql`, a fresh
+Use these flags only after migrations through `011_expand_import_benefit_selection.sql`, a fresh
 database backup, healthy ETL, and a successful dry-run review:
 
 ```text
@@ -162,6 +162,13 @@ Automatically allowed:
 - fully mapped, positive, non-duplicate `auto_creatable` expense/income rows;
 - exact reciprocal asset transfers;
 - `rule_matched` card-benefit candidates with matching mirror entry, card, amounts, and no existing event.
+
+Discount detection uses only `approval_amount > posting_amount`; category names are not benefit evidence.
+The active rule lookup validates card account, observed rate, and minimum approval amount. One exact
+candidate is selected automatically. Multiple candidates require an operator selection, and zero candidates
+leave the benefit in `rule_unknown` while the otherwise-safe ledger row remains creatable. A selected rule is
+revalidated on the server before `app.card_benefit_events` stores approval, performance, posting, and discount
+amounts separately. Whooing always receives the posting amount.
 
 Never automatic:
 
@@ -311,8 +318,8 @@ explicitly approved write and verify its operation key and mirror result before 
 
 ## Supervised approval rollout
 
-1. Apply migrations through `008_expand_import_action_operations.sql` in order after taking a database
-   backup. Until migration 008 is present, `/imports` must report action execution as unavailable and keep
+1. Apply migrations through `011_expand_import_benefit_selection.sql` in order after taking a database
+   backup. Until migration 011 is present, `/imports` must report benefit review as unavailable and keep
    mutation controls disabled.
 2. Keep `GMAIL_IMPORT_DRY_RUN_ONLY=true`, poll or upload one workbook, save its review batch, resolve only
    mappings to existing accounts, and rerun reconciliation.

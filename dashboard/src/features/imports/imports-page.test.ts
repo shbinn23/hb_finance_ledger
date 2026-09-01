@@ -22,9 +22,15 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /할인액/);
   assert.match(source, /카드혜택 후보/);
   assert.match(source, /카드혜택 후보 승인/);
+  assert.match(source, /rule 선택 필요/);
+  assert.match(source, /적합한 활성 rule 없음/);
+  assert.match(source, /원장만 등록 가능/);
+  assert.match(source, /\/api\/imports\/benefit-candidates\/select-rule/);
+  assert.match(source, /선택 후 반영/);
+  assert.match(source, /혜택만 반영/);
   assert.match(source, /검토 batch 저장/);
-  assert.match(source, /후잉 원장은 수정하지 않고 app\.card_benefit_events만 생성합니다/);
-  assert.match(source, /원장 수정 없음, 카드혜택 event만 생성/);
+  assert.match(source, /후잉 원장은 수정하지 않고 app\.card_benefit_events에 혜택만 반영합니다/);
+  assert.match(source, /기존 거래는 혜택만, 신규 거래는 매입금액 원장 등록 후 혜택 반영/);
   assert.match(source, /환급·캐시백·민생지원쿠폰은 review-only/);
   assert.match(source, /새 계정은 명확한 후보를 사용자가 승인한 경우에만 생성합니다/);
   assert.match(source, /Gmail 자동 감지/);
@@ -47,7 +53,7 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /검토 필요/);
   assert.match(source, /현재 추가로 승인할 카드혜택 후보는 없습니다/);
   assert.match(source, /감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다/);
-  assert.match(source, /신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다/);
+  assert.match(source, /카드와 실제 할인율에 따라 확정 또는 rule 선택 필요 상태로 표시됩니다/);
   assert.match(source, /충돌·환급·캐시백·민생지원쿠폰은 review-only/);
   assert.match(source, /\/api\/imports\/actions\/register/);
   assert.match(source, /\/api\/imports\/actions\/approve-update/);
