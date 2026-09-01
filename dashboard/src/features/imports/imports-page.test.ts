@@ -22,6 +22,10 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /할인액/);
   assert.match(source, /카드혜택 후보/);
   assert.match(source, /카드혜택 후보 승인/);
+  assert.match(source, /승인 출처/);
+  assert.match(source, /할인 출처/);
+  assert.match(source, /복원 근거/);
+  assert.match(source, /rule_reconstructed/);
   assert.match(source, /rule 선택 필요/);
   assert.match(source, /적합한 활성 rule 없음/);
   assert.match(source, /원장만 등록 가능/);

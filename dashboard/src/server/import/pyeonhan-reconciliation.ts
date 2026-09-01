@@ -5,6 +5,12 @@ import {
   resolvePyeonhanCardBenefitCandidates,
   type PyeonhanCardBenefitCandidate,
 } from "./pyeonhan-card-benefit.ts";
+import {
+  reconstructPyeonhanBenefitAmounts,
+  type BenefitAmountSource,
+  type BenefitDiscountSource,
+  type BenefitReplayEvent,
+} from "./pyeonhan-benefit-reconstruction.ts";
 
 export type ImportReconciliationStatus =
   | "auto_creatable"
@@ -96,6 +102,12 @@ export interface ReconciledImportRow {
   cardBenefitCandidates: PyeonhanCardBenefitCandidate[];
   cardBenefitStatus: ImportBenefitStatus;
   benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
+  benefitAmountProvenance?: {
+    approvalSource: BenefitAmountSource;
+    discountSource: BenefitDiscountSource;
+    reason: string;
+    confidence: number;
+  };
   changes: ImportRowChange[];
   mirrorChanges: ImportRowChange[];
 }
@@ -386,8 +398,8 @@ function benefitEventIntegrity(
   entry: MirrorEntry | undefined,
   expectedPerformanceAmount: number,
 ): ReconciledImportRow["benefitEventIntegrity"] {
-  if (transaction.discountAmount <= 0 || !entry) return "not_applicable";
-  if (!entry.benefitEventId) return "missing";
+  if (!entry) return "not_applicable";
+  if (!entry.benefitEventId) return transaction.discountAmount > 0 ? "missing" : "not_applicable";
   return entry.benefitEventApprovalAmount === transaction.approvalAmount
     && entry.benefitEventPerformanceAmount === expectedPerformanceAmount
     && entry.benefitEventPostingAmount === transaction.postingAmount
@@ -427,6 +439,12 @@ function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
     cardBenefitCandidates: [],
     cardBenefitStatus: "not_applicable",
     benefitEventIntegrity: "not_applicable",
+    benefitAmountProvenance: {
+      approvalSource: "excel",
+      discountSource: approvalAmount > postingAmount ? "excel_difference" : "none",
+      reason: "이전 import 원본 금액입니다.",
+      confidence: 1,
+    },
     changes: [],
     mirrorChanges: [],
   };
@@ -438,18 +456,52 @@ export function reconcilePyeonhanTransactions({
   mirrorEntries,
   previousRows,
   cardBenefitRules,
+  cardBenefitReplay,
 }: {
   transactions: NormalizedPyeonhanTransaction[];
   mappings: ImportMapping[];
   mirrorEntries: MirrorEntry[];
   previousRows: PreviousImportRow[];
   cardBenefitRules?: CardBenefitRule[];
+  cardBenefitReplay?: {
+    monthlyCaps: Record<string, number | null>;
+    existingEvents: BenefitReplayEvent[];
+  };
 }): PyeonhanReconciliationResult {
+  const resolvedMappings = transactions.map((transaction) => resolveMapping(transaction, mappings));
+  const reconstructed = cardBenefitRules && cardBenefitReplay
+    ? reconstructPyeonhanBenefitAmounts({
+      rows: transactions.map((transaction, index) => ({
+        transaction,
+        mappedCard: resolvedMappings[index].sourceAccount
+          ? {
+            accountType: resolvedMappings[index].sourceAccount.accountType,
+            accountId: resolvedMappings[index].sourceAccount.accountId,
+          }
+          : null,
+      })),
+      rules: cardBenefitRules,
+      monthlyCaps: cardBenefitReplay.monthlyCaps,
+      existingEvents: cardBenefitReplay.existingEvents,
+    })
+    : transactions.map((transaction, index) => ({
+      transaction,
+      mappedCard: resolvedMappings[index].sourceAccount,
+      status: "unchanged" as const,
+      selectedRuleId: null,
+      approvalSource: "excel" as const,
+      discountSource: transaction.discountAmount > 0 ? "excel_difference" as const : "none" as const,
+      reason: transaction.discountAmount > 0
+        ? "Excel 승인금액과 KRW 차이를 사용했습니다."
+        : "카드 할인 복원 근거가 없습니다.",
+      confidence: 1,
+    }));
+  const effectiveTransactions = reconstructed.map((row) => row.transaction);
   const usedMirrorIds = new Set<number>();
   const previousByIdentity = new Map(previousRows.map((row) => [row.sourceIdentityKey, row]));
-  const currentIdentities = new Set(transactions.map((row) => row.sourceIdentityKey));
+  const currentIdentities = new Set(effectiveTransactions.map((row) => row.sourceIdentityKey));
   const missingPrevious = previousRows.filter((row) => !currentIdentities.has(row.sourceIdentityKey));
-  const newTransactions = transactions.filter((row) => !previousByIdentity.has(row.sourceIdentityKey));
+  const newTransactions = effectiveTransactions.filter((row) => !previousByIdentity.has(row.sourceIdentityKey));
   const revisionMatches = new Map(newTransactions.map((transaction) => {
     const candidates = strongestRevisionCandidates(transaction, missingPrevious);
     return [transaction.sourceIdentityKey, {
@@ -464,12 +516,13 @@ export function reconcilePyeonhanTransactions({
     candidateClaimScores.set(candidate.sourceIdentityKey, claims);
   }));
   const claimedPreviousIdentities = new Set<string>();
-  const rows = transactions.map((transaction): ReconciledImportRow => {
-    const mapping = resolveMapping(transaction, mappings);
+  const rows = effectiveTransactions.map((transaction, transactionIndex): ReconciledImportRow => {
+    const mapping = resolvedMappings[transactionIndex];
+    const reconstruction = reconstructed[transactionIndex];
     const legacyCandidate = cardBenefitRules === undefined
       ? identifyPyeonhanCardBenefitCandidate(transaction)
       : null;
-    const resolution = cardBenefitRules === undefined
+    const baseResolution = cardBenefitRules === undefined
       ? {
         status: transaction.discountAmount > 0
           ? legacyCandidate ? "rule_matched" as const : "rule_uncertain" as const
@@ -484,6 +537,21 @@ export function reconcilePyeonhanTransactions({
           : null,
         cardBenefitRules,
       );
+    const reconstructedRule = reconstruction.selectedRuleId && cardBenefitRules
+      ? cardBenefitRules.find((rule) => rule.ruleId === reconstruction.selectedRuleId) ?? null
+      : null;
+    const reconstructedCandidate: PyeonhanCardBenefitCandidate | null = reconstructedRule ? {
+      ruleId: reconstructedRule.ruleId,
+      label: reconstructedRule.name,
+      reason: reconstruction.reason,
+      discountRateBps: reconstructedRule.discountRateBps,
+      performanceAmount: transaction.approvalAmount,
+      confidence: reconstruction.confidence,
+      matchKind: "cap_limited",
+    } : null;
+    const resolution = reconstructedCandidate
+      ? { status: "rule_matched" as const, selectedRuleId: reconstructedCandidate.ruleId, candidates: [reconstructedCandidate] }
+      : baseResolution;
     const cardBenefitCandidate = resolution.selectedRuleId
       ? resolution.candidates.find((candidate) => candidate.ruleId === resolution.selectedRuleId) ?? null
       : null;
@@ -497,9 +565,18 @@ export function reconcilePyeonhanTransactions({
       cardBenefitCandidates: resolution.candidates,
       cardBenefitStatus: resolution.status,
       benefitEventIntegrity: "not_applicable",
+      benefitAmountProvenance: {
+        approvalSource: reconstruction.approvalSource,
+        discountSource: reconstruction.discountSource,
+        reason: reconstruction.reason,
+        confidence: reconstruction.confidence,
+      },
       changes: [],
       mirrorChanges: [],
     };
+    if (reconstruction.status === "review") {
+      base.cardBenefitStatus = "needs_review";
+    }
     const manualReason = manualReviewReason(transaction);
     if (manualReason) return { ...base, status: "review_required", reason: manualReason };
     const gap = mappingGap(transaction, mapping);
@@ -535,6 +612,20 @@ export function reconcilePyeonhanTransactions({
     }
 
     if (previous) {
+      const replayAmountChanged = previous.postingAmount !== undefined
+        && previous.approvalAmount !== undefined
+        && (previous.postingAmount !== transaction.postingAmount
+          || previous.approvalAmount !== transaction.approvalAmount);
+      if (replayAmountChanged) {
+        return {
+          ...base,
+          status: "review_required",
+          cardBenefitStatus: "needs_review",
+          reason: "원본 Excel은 같지만 카드 한도 replay 결과가 이전 import와 달라져 검토가 필요합니다.",
+          matchedWhooingEntryId: previous.matchedWhooingEntryId,
+          changes: revisionChanges(previous, transaction),
+        };
+      }
       return {
         ...base,
         status: "duplicate",
@@ -609,6 +700,21 @@ export function reconcilePyeonhanTransactions({
         matchedWhooingEntryId: similarMirror?.entryId ?? null,
         benefitEventIntegrity: eventIntegrity,
         mirrorChanges: mirrorChanges(base, similarMirror),
+      };
+    }
+
+    if (similarMirror?.benefitEventId) {
+      usedMirrorIds.add(similarMirror.entryId);
+      const eventIntegrity = benefitEventIntegrity(transaction, similarMirror, transaction.approvalAmount);
+      return {
+        ...base,
+        status: eventIntegrity === "matched" ? "duplicate" : "review_required",
+        cardBenefitStatus: eventIntegrity === "matched" ? "event_exists" : "needs_review",
+        benefitEventIntegrity: eventIntegrity,
+        matchedWhooingEntryId: similarMirror.entryId,
+        reason: eventIntegrity === "matched"
+          ? "동일한 Whooing 거래와 카드혜택 event가 있습니다."
+          : "기존 카드혜택 event와 import 승인·매입·할인 금액이 일치하지 않습니다.",
       };
     }
 

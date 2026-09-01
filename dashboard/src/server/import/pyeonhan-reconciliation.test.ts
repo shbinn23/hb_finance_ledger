@@ -107,6 +107,84 @@ test("reconciliation keeps a discounted row ledger-creatable and resolves its un
   assert.equal(result.rows[0].cardBenefitCandidates.length, 1);
 });
 
+test("reconciliation reconstructs a unique cap-limited approval and records provenance", () => {
+  const cappedRules = [{
+    ...mgsRules[0],
+    monthlyCapTiers: [{ performanceThreshold: 1_000_000, monthlyCapAmount: 60_000 }],
+  }];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      occurredDate: "2026-08-15",
+      sourceAssetName: "하나 MG+S",
+      item: "카카오페이 결제",
+      postingAmount: 47_000,
+      approvalAmount: 47_000,
+      discountAmount: 0,
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "하나 MG+S", accountType: "liabilities", accountId: "x45", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows: [],
+    cardBenefitRules: cappedRules,
+    cardBenefitReplay: {
+      monthlyCaps: { "2026-08:hana_mgs_simple_pay_10p": 60_000 },
+      existingEvents: [{
+        occurredDate: "2026-08-14",
+        ruleId: "hana_mgs_simple_pay_10p",
+        cardAccountId: "x45",
+        appliedDiscountAmount: 57_000,
+      }],
+    },
+  });
+
+  assert.equal(result.rows[0].status, "auto_creatable");
+  assert.equal(result.rows[0].transaction.approvalAmount, 50_000);
+  assert.equal(result.rows[0].transaction.postingAmount, 47_000);
+  assert.equal(result.rows[0].transaction.discountAmount, 3_000);
+  assert.equal(result.rows[0].cardBenefitStatus, "rule_matched");
+  assert.equal(result.rows[0].cardBenefitCandidate?.ruleId, "hana_mgs_simple_pay_10p");
+  assert.equal(result.rows[0].benefitAmountProvenance?.approvalSource, "rule_reconstructed");
+  assert.match(result.rows[0].benefitAmountProvenance?.reason ?? "", /잔여 한도 3,000원/);
+});
+
+test("reconciliation keeps an ambiguous reconstruction ledger-creatable but marks benefit review", () => {
+  const duplicateRateRules = [
+    { ...mgsRules[0], monthlyCapTiers: [{ performanceThreshold: 1_000_000, monthlyCapAmount: 60_000 }] },
+    { ...mgsRules[0], ruleId: "other_10p", name: "다른 10%", priority: 11,
+      monthlyCapTiers: [{ performanceThreshold: 1_000_000, monthlyCapAmount: 60_000 }] },
+  ];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      occurredDate: "2026-08-15",
+      sourceAssetName: "하나 MG+S",
+      item: "카카오페이 결제",
+      postingAmount: 47_000,
+      approvalAmount: 47_000,
+      discountAmount: 0,
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "하나 MG+S", accountType: "liabilities", accountId: "x45", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows: [],
+    cardBenefitRules: duplicateRateRules,
+    cardBenefitReplay: {
+      monthlyCaps: {
+        "2026-08:hana_mgs_simple_pay_10p": 60_000,
+        "2026-08:other_10p": 60_000,
+      },
+      existingEvents: [],
+    },
+  });
+
+  assert.equal(result.rows[0].status, "auto_creatable");
+  assert.equal(result.rows[0].cardBenefitStatus, "needs_review");
+  assert.match(result.rows[0].benefitAmountProvenance?.reason ?? "", /후보가 2개/);
+});
+
 test("reconciliation keeps the ledger creatable when no benefit rule matches", () => {
   const result = reconcilePyeonhanTransactions({
     transactions: [transaction({
@@ -560,6 +638,54 @@ test("reconciliation keeps an unchanged previously created row duplicate when th
 
   assert.equal(result.rows[0].status, "duplicate");
   assert.equal(result.rows[0].matchedWhooingEntryId, 1428000);
+});
+
+test("reconciliation reviews a changed replay result even when the raw source hash is unchanged", () => {
+  const previousRows: PreviousImportRow[] = [{
+    sourceIdentityKey: "identity-1",
+    sourceContentHash: "content-1",
+    status: "created",
+    matchedWhooingEntryId: 1428000,
+    postingAmount: 47_000,
+    approvalAmount: 47_000,
+  }];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({ postingAmount: 47_000, approvalAmount: 50_000, discountAmount: 3_000 })],
+    mappings,
+    mirrorEntries: [],
+    previousRows,
+  });
+
+  assert.equal(result.rows[0].status, "review_required");
+  assert.equal(result.rows[0].cardBenefitStatus, "needs_review");
+  assert.match(result.rows[0].reason, /replay 결과/);
+});
+
+test("reconciliation reviews an existing benefit event that conflicts with equal Excel amounts", () => {
+  const cardMappings: ImportMapping[] = [
+    ...mappings,
+    { mappingType: "asset", sourceKey: "하나 MG+S", accountType: "liabilities", accountId: "x45", confidence: 1 },
+  ];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({ sourceAssetName: "하나 MG+S", postingAmount: 47_000, approvalAmount: 47_000 })],
+    mappings: cardMappings,
+    mirrorEntries: [mirror({
+      rightAccountType: "liabilities",
+      rightAccountId: "x45",
+      amount: 47_000,
+      benefitEventId: "event-1",
+      benefitEventApprovalAmount: 50_000,
+      benefitEventPerformanceAmount: 50_000,
+      benefitEventPostingAmount: 47_000,
+      benefitEventDiscountAmount: 3_000,
+    })],
+    previousRows: [],
+    cardBenefitRules: mgsRules,
+  });
+
+  assert.equal(result.rows[0].status, "review_required");
+  assert.equal(result.rows[0].cardBenefitStatus, "needs_review");
+  assert.equal(result.rows[0].benefitEventIntegrity, "amount_mismatch");
 });
 
 test("reconciliation reports previous snapshot identities missing from the current export", () => {

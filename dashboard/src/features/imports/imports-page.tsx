@@ -60,6 +60,12 @@ interface DryRunRow {
   benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
   cardBenefitCandidate: BenefitCandidate | null;
   cardBenefitCandidates?: BenefitCandidate[];
+  benefitAmountProvenance?: {
+    approvalSource: "excel" | "rule_reconstructed";
+    discountSource: "none" | "excel_difference" | "rule_reconstructed";
+    reason: string;
+    confidence: number;
+  };
 }
 
 interface DryRunResult {
@@ -203,6 +209,16 @@ function won(value: number) {
 function changeValue(value: string | number | null) {
   if (value === null || value === "") return "없음";
   return typeof value === "number" ? won(value) : value;
+}
+
+function amountSourceLabel(value: "excel" | "rule_reconstructed" | undefined) {
+  return value === "rule_reconstructed" ? "rule 역산" : "Excel";
+}
+
+function discountSourceLabel(value: "none" | "excel_difference" | "rule_reconstructed" | undefined) {
+  if (value === "rule_reconstructed") return "rule 역산";
+  if (value === "excel_difference") return "Excel 차액";
+  return "할인 없음";
 }
 
 function rowMatchesFilter(row: DryRunRow, filter: ImportViewFilter) {
@@ -601,7 +617,9 @@ export function ImportsPage() {
 
   const rows = result ? [...result.rows, ...result.possibleDeletes] : [];
   const filteredRows = rows.filter((row) => rowMatchesFilter(row, viewFilter));
-  const benefitRows = result?.rows.filter((row) => row.transaction.discountAmount > 0) ?? [];
+  const benefitRows = result?.rows.filter((row) => (
+    row.transaction.discountAmount > 0 || row.cardBenefitStatus !== "not_applicable"
+  )) ?? [];
   const benefitRuleSummary = [...benefitRows.reduce((summary, row) => {
     const candidate = row.cardBenefitCandidate;
     if (!candidate) return summary;
@@ -793,6 +811,7 @@ export function ImportsPage() {
                     <thead><tr>
                       <th>날짜</th><th>카드</th><th>분류</th><th>내용</th><th>원본/import ID</th><th>mirror ID</th>
                       <th className="amount">승인금액</th><th className="amount">매입금액</th><th className="amount">할인</th>
+                      <th>승인 출처</th><th>할인 출처</th><th>복원 근거</th>
                       <th className="amount">실적 후보</th><th>할인율</th><th>추정 rule</th><th>신뢰도</th><th>상태</th><th>액션</th>
                     </tr></thead>
                     <tbody>
@@ -816,6 +835,9 @@ export function ImportsPage() {
                             <td className="amount">{won(row.transaction.approvalAmount)}</td>
                             <td className="amount">{won(row.transaction.postingAmount)}</td>
                             <td className="amount">{won(row.transaction.discountAmount)}</td>
+                            <td>{amountSourceLabel(row.benefitAmountProvenance?.approvalSource)}</td>
+                            <td>{discountSourceLabel(row.benefitAmountProvenance?.discountSource)}</td>
+                            <td><small>{row.benefitAmountProvenance?.reason ?? row.cardBenefitCandidate?.reason ?? "-"}</small></td>
                             <td className="amount">{candidates[0] ? won(candidates[0].performanceAmount) : "-"}</td>
                             <td>{candidates.length > 0 ? [...new Set(candidates.map((candidate) => `${candidate.discountRateBps / 100}%`))].join(", ") : "-"}</td>
                             <td>{candidates.length > 0 ? (

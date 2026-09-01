@@ -1,4 +1,8 @@
-import { insertCardBenefitEvent, updateCardBenefitEvent } from "../card-benefits/repository";
+import {
+  insertCardBenefitEvent,
+  updateCardBenefitEvent,
+  validateCapLimitedImportDiscount,
+} from "../card-benefits/repository";
 import {
   finishImportOperationRecord,
   getBenefitApprovalCandidate,
@@ -18,6 +22,12 @@ export function approveRuntimePyeonhanBenefitCandidate(input: { importRowId: num
     createEvent: (event: ImportBenefitEventInsert) => insertCardBenefitEvent(event),
     updateEvent: (eventId, event, expected) => updateCardBenefitEvent(eventId, event, expected),
     updateBenefitStatus: updateImportBenefitStatus,
+    validateCapLimitedDiscount: (candidate) => validateCapLimitedImportDiscount({
+      occurredDate: candidate.occurredDate,
+      ruleId: candidate.rule.ruleId,
+      approvalAmount: candidate.approvalAmount,
+      discountAmount: candidate.discountAmount,
+    }),
   });
 }
 

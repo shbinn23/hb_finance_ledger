@@ -95,6 +95,7 @@ export interface BenefitApprovalDependencies {
     eventId?: string | null;
     reason: string;
   }) => Promise<void>;
+  validateCapLimitedDiscount?: (candidate: BenefitApprovalCandidate) => Promise<boolean>;
 }
 
 export interface BenefitApprovalResult {
@@ -176,6 +177,13 @@ export async function approvePyeonhanBenefitCandidate(
     && candidate.discountAmount < eligibleDiscountAmount;
   if (!exactDiscount && !capLimitedDiscount) {
     return rejected("저장된 할인액이 선택한 rule의 할인율과 일치하지 않습니다.");
+  }
+  if (
+    capLimitedDiscount
+    && (!dependencies.validateCapLimitedDiscount
+      || !await dependencies.validateCapLimitedDiscount(candidate))
+  ) {
+    return rejected("현재 월 한도 사용 내역으로 부분 할인 복원값을 다시 확인할 수 없습니다.");
   }
 
   const performanceAmount = rule.performanceAmountPolicy === "posting_amount"

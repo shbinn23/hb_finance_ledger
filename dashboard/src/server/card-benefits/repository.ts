@@ -27,6 +27,7 @@ import {
   entryDateRangeForBenefitMonth,
   monthlyContextFromAutomaticPerformance,
 } from "./repository-helpers";
+import { resolveMonthlyCap } from "@/lib/card-benefits/evaluator";
 
 type RuleStatus = CardBenefitRule["status"];
 type DiscountType = CardBenefitRule["discountType"];
@@ -585,6 +586,71 @@ async function getPreviousPerformanceEstimateAmount(benefitMonth: string, ruleId
   );
 
   return numberFromDb(result.rows[0]?.amount);
+}
+
+export async function getPreviousStructuredPerformanceAmount(benefitMonth: string, ruleId: string) {
+  const previousMonth = previousBenefitMonth(benefitMonth);
+  const { startDate, endDate } = entryDateRangeForBenefitMonth(previousMonth);
+  const result = await query<PerformanceAmountDbRow>(
+    `
+    select coalesce(sum(e.performance_amount), 0) as amount
+    from app.card_benefit_events e
+    join app.card_benefit_rules r
+      on r.rule_id = $3
+     and r.card_account_type = e.card_account_type
+     and r.card_account_id = e.card_account_id
+    where e.entry_date >= $1
+      and e.entry_date < $2
+      and (e.section_id = $4 or e.section_id is null)
+    `,
+    [startDate, endDate, ruleId, sectionId],
+  );
+  return numberFromDb(result.rows[0]?.amount);
+}
+
+export async function validateCapLimitedImportDiscount(input: {
+  occurredDate: string;
+  ruleId: string;
+  approvalAmount: number;
+  discountAmount: number;
+}) {
+  const rules = await getActiveCardBenefitRules();
+  const rule = rules.find((candidate) => candidate.ruleId === input.ruleId);
+  if (!rule || rule.monthlyCapTiers.length === 0) return false;
+  const benefitMonth = input.occurredDate.slice(0, 7);
+  const performanceAmount = await getPreviousStructuredPerformanceAmount(benefitMonth, rule.ruleId);
+  const monthlyCap = resolveMonthlyCap(rule.monthlyCapTiers, performanceAmount);
+  if (monthlyCap === null) return false;
+  const usageRuleId = rule.capUsageRuleId || rule.ruleId;
+  const groupedRuleIds = rules
+    .filter((candidate) => (candidate.capUsageRuleId || candidate.ruleId) === usageRuleId)
+    .map((candidate) => candidate.ruleId);
+  const occurredDate = Number(input.occurredDate.replaceAll("-", ""));
+  const { startDate, endDate } = entryDateRangeForBenefitMonth(benefitMonth);
+  const usage = await query<{ used_before: string; same_date_count: string }>(
+    `
+    select
+      coalesce(sum(applied_discount_amount) filter (where entry_date < $2), 0)::text as used_before,
+      count(*) filter (where entry_date = $2)::text as same_date_count
+    from app.card_benefit_events
+    where rule_id = any($1::text[])
+      and entry_date >= $3
+      and entry_date < $4
+      and (section_id = $5 or section_id is null)
+    `,
+    [
+      groupedRuleIds,
+      occurredDate,
+      startDate,
+      endDate,
+      sectionId,
+    ],
+  );
+  if (Number(usage.rows[0]?.same_date_count ?? 0) > 0) return false;
+  const remainingCap = Math.max(0, monthlyCap - numberFromDb(usage.rows[0]?.used_before));
+  const theoreticalDiscount = Math.floor(input.approvalAmount * rule.discountRateBps / 10_000);
+  return input.discountAmount === Math.min(theoreticalDiscount, remainingCap)
+    && input.discountAmount === remainingCap;
 }
 
 export async function buildCardBenefitMonthlyContext(benefitMonth: string, ruleId: string) {

@@ -14,6 +14,7 @@ import type {
   ImportBatchStatus,
   PersistedImportBatchStatus,
 } from "./pyeonhan-types.ts";
+import type { BenefitReplayEvent } from "./pyeonhan-benefit-reconstruction.ts";
 
 const sectionId = process.env.WHOOING_SECTION_ID ?? "s152045";
 
@@ -235,6 +236,35 @@ export async function getMirrorEntriesForRange(startDate: string, endDate: strin
     benefitEventPerformanceAmount: row.benefit_performance_amount === null ? null : Number(row.benefit_performance_amount),
     benefitEventPostingAmount: row.benefit_posting_amount === null ? null : Number(row.benefit_posting_amount),
     benefitEventDiscountAmount: row.benefit_discount_amount === null ? null : Number(row.benefit_discount_amount),
+  }));
+}
+
+export async function getBenefitReplayEventsForRange(startDate: string, endDate: string): Promise<BenefitReplayEvent[]> {
+  const monthStart = `${startDate.slice(0, 7)}-01`;
+  const result = await query<{
+    entry_date: string;
+    rule_id: string;
+    card_account_id: string;
+    applied_discount_amount: string;
+  }>(
+    `
+    select entry_date::text, rule_id, card_account_id,
+           applied_discount_amount::text
+    from app.card_benefit_events
+    where (section_id = $1 or section_id is null)
+      and entry_date >= $2
+      and entry_date < $3
+      and rule_id is not null
+    order by entry_date, created_at, event_id
+    `,
+    [sectionId, compactDate(monthStart), compactDate(endDate) + 1],
+  );
+  return result.rows.map((row) => ({
+    occurredDate: String(Math.floor(Number(row.entry_date))).padStart(8, "0")
+      .replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"),
+    ruleId: row.rule_id,
+    cardAccountId: row.card_account_id,
+    appliedDiscountAmount: Number(row.applied_discount_amount),
   }));
 }
 
@@ -476,7 +506,7 @@ export async function createImportBatch(input: {
           row.cardBenefitStatus,
           row.cardBenefitCandidate?.ruleId ?? null,
           row.cardBenefitCandidate?.confidence ?? null,
-          row.cardBenefitCandidate?.reason ?? "",
+          row.cardBenefitCandidate?.reason ?? row.benefitAmountProvenance?.reason ?? "",
           row.cardBenefitStatus === "event_exists"
             ? (await getExistingBenefitEventId(row.matchedWhooingEntryId, transactionQuery))
             : null,
@@ -658,7 +688,7 @@ export async function refreshImportReviewBatch(input: {
           row.cardBenefitStatus,
           row.cardBenefitCandidate?.ruleId ?? null,
           row.cardBenefitCandidate?.confidence ?? null,
-          row.cardBenefitCandidate?.reason ?? "",
+          row.cardBenefitCandidate?.reason ?? row.benefitAmountProvenance?.reason ?? "",
           row.cardBenefitStatus === "event_exists"
             ? await getExistingBenefitEventId(row.matchedWhooingEntryId, transactionQuery)
             : null,

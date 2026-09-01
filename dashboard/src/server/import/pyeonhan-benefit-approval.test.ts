@@ -196,6 +196,7 @@ test("benefit approval stores an observed cap-limited discount below the theoret
     },
   });
   const deps = dependencies(record);
+  deps.validateCapLimitedDiscount = async () => true;
   let inserted: { eligibleDiscountAmount: number; appliedDiscountAmount: number } | null = null;
   deps.createEvent = async (event) => {
     inserted = event;
@@ -212,4 +213,29 @@ test("benefit approval stores an observed cap-limited discount below the theoret
     eligibleDiscountAmount: inserted.eligibleDiscountAmount,
     appliedDiscountAmount: inserted.appliedDiscountAmount,
   }, { eligibleDiscountAmount: 15900, appliedDiscountAmount: 833 });
+});
+
+test("benefit approval rejects a stale cap-limited reconstruction", async () => {
+  const record = candidate({
+    approvalAmount: 50_000,
+    postingAmount: 47_000,
+    discountAmount: 3_000,
+    mirrorEntry: { ...candidate().mirrorEntry!, amount: 47_000 },
+    rule: {
+      ...candidate().rule,
+      discountRateBps: 1_000,
+      hasMonthlyCap: true,
+    },
+  });
+  const deps = dependencies(record);
+  deps.validateCapLimitedDiscount = async () => false;
+
+  const result = await approvePyeonhanBenefitCandidate(
+    { importRowId: 11, ruleId: "shinhan_lady_lunch_5p" },
+    deps,
+  );
+
+  assert.equal(result.status, "rejected");
+  assert.match(result.message, /다시 확인할 수 없습니다/);
+  assert.deepEqual(deps.statuses, []);
 });

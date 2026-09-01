@@ -5,11 +5,16 @@ import {
 import {
   getImportMappings,
   getImportSchemaStatus,
+  getBenefitReplayEventsForRange,
   getMirrorEntriesForRange,
   getPreviousImportRowsForRange,
 } from "./import-repository.ts";
 import { reconcilePyeonhanTransactions } from "./pyeonhan-reconciliation.ts";
-import { getActiveCardBenefitRules } from "../card-benefits/repository.ts";
+import {
+  getActiveCardBenefitRules,
+  getPreviousStructuredPerformanceAmount,
+} from "../card-benefits/repository.ts";
+import { resolveMonthlyCap } from "../../lib/card-benefits/evaluator.ts";
 
 export const MAX_PYEONHAN_UPLOAD_BYTES = 5 * 1024 * 1024;
 
@@ -34,12 +39,30 @@ export async function buildPyeonhanDryRun(file: File) {
     getImportSchemaStatus(),
     getActiveCardBenefitRules(),
   ]);
+  const months = [...new Set(parsed.transactions.map((row) => row.occurredDate.slice(0, 7)))];
+  const cappedRuleMonths = cardBenefitRules.flatMap((rule) => (
+    rule.monthlyCapTiers.length > 0 ? months.map((month) => ({ rule, month })) : []
+  ));
+  const [capRows, existingEvents] = await Promise.all([
+    Promise.all(cappedRuleMonths.map(async ({ rule, month }) => ({
+      key: `${month}:${rule.ruleId}`,
+      cap: resolveMonthlyCap(
+        rule.monthlyCapTiers,
+        await getPreviousStructuredPerformanceAmount(month, rule.ruleId),
+      ),
+    }))),
+    getBenefitReplayEventsForRange(startDate, endDate),
+  ]);
   const reconciliation = reconcilePyeonhanTransactions({
     transactions: parsed.transactions,
     mappings,
     mirrorEntries,
     previousRows,
     cardBenefitRules,
+    cardBenefitReplay: {
+      monthlyCaps: Object.fromEntries(capRows.map((row) => [row.key, row.cap])),
+      existingEvents,
+    },
   });
   return {
     filename: file.name,
