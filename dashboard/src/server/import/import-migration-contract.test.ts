@@ -28,6 +28,10 @@ const importDeleteOperations = readFileSync(
   resolve(migrationRoot, "010_add_import_delete_operations.sql"),
   "utf8",
 );
+const importBenefitSelection = readFileSync(
+  resolve(migrationRoot, "011_expand_import_benefit_selection.sql"),
+  "utf8",
+);
 const importRepository = readFileSync(
   resolve(import.meta.dirname, "import-repository.ts"),
   "utf8",
@@ -122,4 +126,15 @@ test("manual delete migration is additive, transactional, and records terminal d
   assert.match(importDeleteOperations, /where operation_type in \('create', 'benefit', 'delete'\)/);
   assert.doesNotMatch(importDeleteOperations, /drop table/i);
   assert.match(importDeleteOperations, /commit;\s*$/i);
+});
+
+test("benefit selection migration preserves legacy states and adds explicit review states", () => {
+  assert.match(importBenefitSelection, /^begin;/i);
+  assert.match(importBenefitSelection, /drop constraint if exists import_rows_benefit_status_check/);
+  assert.match(importBenefitSelection, /'rule_uncertain'/);
+  assert.match(importBenefitSelection, /'needs_review'/);
+  assert.match(importBenefitSelection, /'rule_selection_required'/);
+  assert.match(importBenefitSelection, /'rule_unknown'/);
+  assert.doesNotMatch(importBenefitSelection, /drop table/i);
+  assert.match(importBenefitSelection, /commit;\s*$/i);
 });
