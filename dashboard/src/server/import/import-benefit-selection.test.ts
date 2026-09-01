@@ -75,6 +75,19 @@ test("registers the posting ledger then applies a server-validated MG+S rule", a
   assert.deepEqual(deps.selected, [rule.ruleId]);
 });
 
+test("reopens an explicitly reviewed unmatched row when the operator confirms its benefit rule", async () => {
+  const deps = dependencies({ getRow: async () => ({ ...row, status: "reviewed" }) });
+  const result = await executeImportBenefitSelection({
+    importRowId: row.id,
+    selectedRuleId: rule.ruleId,
+    action: "register_and_apply",
+  }, deps.value);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ledgerStatus, "created");
+  assert.deepEqual(deps.selected, [rule.ruleId]);
+});
+
 test("rejects a selected rule that is inactive, wrong-card, wrong-rate, or below minimum", async () => {
   for (const invalidRule of [
     { ...rule, status: "disabled" as const },

@@ -47,6 +47,13 @@ test("created import rows retain the linked Whooing entry for benefit approval",
   assert.match(source, /export async function saveImportBenefitRuleSelection/);
 });
 
+test("selecting a benefit rule reopens only reviewed rows without a mirror entry", () => {
+  assert.match(
+    source,
+    /status = case[\s\S]*status = 'reviewed'[\s\S]*matched_whooing_entry_id is null[\s\S]*then 'auto_creatable'/,
+  );
+});
+
 test("reused import batches refresh only non-terminal reconciliation state", () => {
   assert.match(source, /export async function refreshImportReviewBatch/);
   assert.match(source, /status not in \('created', 'updated', 'deleted', 'skipped', 'reviewed', 'write_failed'\)/);

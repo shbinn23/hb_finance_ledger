@@ -1001,7 +1001,11 @@ export async function saveImportBenefitRuleSelection(input: {
   await query(
     `
     update app.import_rows
-    set benefit_status = 'rule_matched', benefit_rule_id = $2,
+    set status = case
+          when status = 'reviewed' and matched_whooing_entry_id is null then 'auto_creatable'
+          else status
+        end,
+        benefit_status = 'rule_matched', benefit_rule_id = $2,
         benefit_confidence = 1, benefit_reason = $3, updated_at = now()
     where id = $1
     `,

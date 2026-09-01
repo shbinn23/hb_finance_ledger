@@ -100,7 +100,7 @@ export async function executeImportBenefitSelection(
   if (
     input.action === "register_and_apply"
     && !row.matchedWhooingEntryId
-    && row.status !== "auto_creatable"
+    && !["auto_creatable", "reviewed"].includes(row.status)
   ) {
     return rejected("신규 원장 등록이 가능한 상태가 아닙니다.");
   }
