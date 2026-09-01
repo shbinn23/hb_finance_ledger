@@ -17,6 +17,8 @@ function row(overrides: Partial<ImportActionRow> = {}): ImportActionRow {
     sourceContentHash: "b".repeat(64),
     occurredDate: "2026-08-15",
     entryType: "expense",
+    sourceCategoryName: "선택",
+    sourceSubcategoryName: "식비",
     item: "점심",
     memo: "",
     postingAmount: 9000,
@@ -117,6 +119,100 @@ test("review-only and dangerous statuses are never created", async () => {
     row({ id: 2, status: "conflict", sourceIdentityKey: "c".repeat(64) }),
   ]);
   const result = await executeApprovedImportCreates({ rowIds: [1, 2], dependencies: fixture.dependencies });
+  assert.equal(result.skipped, 2);
+  assert.equal(fixture.created.length, 0);
+});
+
+test("explicit review confirmation creates a mapped review income without weakening automatic creates", async () => {
+  const reviewIncome = row({
+    status: "review_required",
+    entryType: "income",
+    sourceAccountType: "assets",
+    sourceAccountId: "x-bank",
+    categoryAccountId: "x-cashback",
+    sourceCategoryName: "환급",
+    sourceSubcategoryName: "캐시백",
+  });
+  const automatic = dependencies([reviewIncome]);
+  const automaticResult = await executeApprovedImportCreates({
+    rowIds: [1],
+    dependencies: automatic.dependencies,
+  });
+  assert.equal(automaticResult.skipped, 1);
+  assert.equal(automatic.created.length, 0);
+
+  const manual = dependencies([reviewIncome]);
+  const manualResult = await executeApprovedImportCreates({
+    rowIds: [1],
+    allowReviewedIncome: true,
+    dependencies: manual.dependencies,
+  });
+  assert.equal(manualResult.created, 1);
+  assert.deepEqual(manual.created, [{
+    type: "income",
+    occurredDate: "2026-08-15",
+    item: "점심",
+    amount: 9000,
+    memo: "",
+    operationKey: `pyeonhan:${"a".repeat(64)}`,
+    source: "pyeonhan_excel",
+    incomeAccountId: "x-cashback",
+    depositAccountId: "x-bank",
+  }]);
+});
+
+test("explicit review confirmation can recover a skipped mapped income but not a reviewed expense", async () => {
+  const fixture = dependencies([
+    row({
+      status: "skipped",
+      entryType: "income",
+      sourceAccountType: "assets",
+      sourceAccountId: "x-bank",
+      categoryAccountId: "x-cashback",
+      sourceCategoryName: "환급",
+      sourceSubcategoryName: "캐시백",
+    }),
+    row({ id: 2, status: "review_required", sourceIdentityKey: "c".repeat(64) }),
+  ]);
+  const result = await executeApprovedImportCreates({
+    rowIds: [1, 2],
+    allowReviewedIncome: true,
+    dependencies: fixture.dependencies,
+  });
+  assert.equal(result.created, 1);
+  assert.equal(result.skipped, 1);
+  assert.equal(fixture.created.length, 1);
+});
+
+test("explicit review confirmation rejects unrelated or mirror-linked reviewed income", async () => {
+  const fixture = dependencies([
+    row({
+      status: "reviewed",
+      entryType: "income",
+      sourceAccountType: "assets",
+      sourceAccountId: "x-bank",
+      categoryAccountId: "x-income",
+      sourceCategoryName: "정산",
+      sourceSubcategoryName: "기타",
+    }),
+    row({
+      id: 2,
+      status: "review_required",
+      sourceIdentityKey: "c".repeat(64),
+      entryType: "income",
+      sourceAccountType: "assets",
+      sourceAccountId: "x-bank",
+      categoryAccountId: "x-cashback",
+      sourceCategoryName: "환급",
+      sourceSubcategoryName: "캐시백",
+      matchedWhooingEntryId: 91,
+    }),
+  ]);
+  const result = await executeApprovedImportCreates({
+    rowIds: [1, 2],
+    allowReviewedIncome: true,
+    dependencies: fixture.dependencies,
+  });
   assert.equal(result.skipped, 2);
   assert.equal(fixture.created.length, 0);
 });

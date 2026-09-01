@@ -12,6 +12,8 @@ export interface ImportActionRow {
   sourceContentHash: string;
   occurredDate: string;
   entryType: string;
+  sourceCategoryName: string | null;
+  sourceSubcategoryName: string | null;
   item: string;
   memo: string;
   postingAmount: number;
@@ -120,6 +122,7 @@ function requestForRow(row: ImportActionRow): DashboardLedgerEntryRequest | null
 
 export async function executeApprovedImportCreates(input: {
   rowIds: number[];
+  allowReviewedIncome?: boolean;
   dependencies: ImportActionDependencies;
 }) {
   const rows = await input.dependencies.getRows(input.rowIds);
@@ -135,7 +138,17 @@ export async function executeApprovedImportCreates(input: {
 
   for (const rowId of input.rowIds) {
     const row = byId.get(rowId);
-    const request = row?.status === "auto_creatable" ? requestForRow(row) : null;
+    const reviewCategory = `${row?.sourceCategoryName ?? ""} ${row?.sourceSubcategoryName ?? ""}`;
+    const reviewIncomeApproved = Boolean(
+      input.allowReviewedIncome
+      && row?.entryType === "income"
+      && ["review_required", "reviewed", "skipped"].includes(row.status)
+      && row.matchedWhooingEntryId === null
+      && /(환급|캐시백)/.test(reviewCategory)
+    );
+    const request = row && (row.status === "auto_creatable" || reviewIncomeApproved)
+      ? requestForRow(row)
+      : null;
     if (!row || !request) {
       results.push({ rowId, status: "skipped", entryId: null, syncStatus: "skipped", operationKey: null, message: "승인 가능한 신규 거래가 아닙니다." });
       continue;

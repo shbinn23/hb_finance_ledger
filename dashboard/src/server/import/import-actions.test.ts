@@ -73,7 +73,15 @@ test("review actions require a positive persisted import row id", () => {
 test("create approval requires confirmation and unique positive row ids", () => {
   assert.deepEqual(parseImportCreateRequest({ confirmed: true, importRowIds: [7, 9, 7] }), {
     ok: true,
-    value: { importRowIds: [7, 9] },
+    value: { importRowIds: [7, 9], reviewConfirmed: false },
+  });
+  assert.deepEqual(parseImportCreateRequest({
+    confirmed: true,
+    reviewConfirmed: true,
+    importRowIds: [7],
+  }), {
+    ok: true,
+    value: { importRowIds: [7], reviewConfirmed: true },
   });
   assert.equal(parseImportCreateRequest({ confirmed: false, importRowIds: [7] }).ok, false);
   assert.equal(parseImportCreateRequest({ confirmed: true, importRowIds: [0] }).ok, false);

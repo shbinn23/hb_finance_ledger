@@ -31,8 +31,11 @@ const dependencies = {
   createEntry: createRuntimeDashboardLedgerEntry,
 };
 
-export function executeRuntimeApprovedImportCreates(rowIds: number[]) {
-  return executeApprovedImportCreates({ rowIds, dependencies });
+export function executeRuntimeApprovedImportCreates(
+  rowIds: number[],
+  options: { allowReviewedIncome?: boolean } = {},
+) {
+  return executeApprovedImportCreates({ rowIds, ...options, dependencies });
 }
 
 export function executeRuntimeImportBenefitSelection(input: {

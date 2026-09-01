@@ -70,6 +70,9 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /\/api\/imports\/actions\/review/);
   assert.match(source, /\/api\/imports\/actions\/history/);
   assert.match(source, /Whooing 원장에 실제 등록/);
+  assert.match(source, /검토 후 등록/);
+  assert.match(source, /reviewConfirmed/);
+  assert.match(source, /기존 계정에 매핑/);
   assert.match(source, /Whooing 거래를 실제 수정/);
   assert.match(source, /작업 이력/);
   assert.match(source, /새 계정 생성 승인/);

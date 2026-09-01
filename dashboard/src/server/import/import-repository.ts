@@ -1102,6 +1102,8 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
     source_content_hash: string;
     occurred_date: string;
     entry_type: string;
+    source_category_name: string | null;
+    source_subcategory_name: string | null;
     item: string;
     memo: string;
     posting_amount: string;
@@ -1127,7 +1129,8 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
   }>(
     `
     select r.id::text, r.status, r.source_identity_key, r.source_content_hash,
-           r.occurred_date::text, r.entry_type, r.item, r.memo, r.posting_amount::text,
+           r.occurred_date::text, r.entry_type, r.source_category_name, r.source_subcategory_name,
+           r.item, r.memo, r.posting_amount::text,
            r.approval_amount::text, r.discount_amount::text, r.benefit_rule_id,
            source_mapping.whooing_account_type as source_account_type,
            source_mapping.whooing_account_id as source_account_id,
@@ -1173,6 +1176,8 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
     sourceContentHash: row.source_content_hash,
     occurredDate: row.occurred_date,
     entryType: row.entry_type,
+    sourceCategoryName: row.source_category_name,
+    sourceSubcategoryName: row.source_subcategory_name,
     item: row.item,
     memo: row.memo,
     postingAmount: Number(row.posting_amount),

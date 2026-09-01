@@ -29,6 +29,8 @@ export async function POST(request: NextRequest) {
   if (!(await getImportSchemaStatus()).actionExecutionSupported) {
     return NextResponse.json({ ok: false, error: "import_action_schema_unavailable" }, { status: 503 });
   }
-  const result = await executeRuntimeApprovedImportCreates(parsed.value.importRowIds);
+  const result = await executeRuntimeApprovedImportCreates(parsed.value.importRowIds, {
+    allowReviewedIncome: parsed.value.reviewConfirmed,
+  });
   return NextResponse.json(result, { status: result.failed > 0 ? 207 : 200 });
 }

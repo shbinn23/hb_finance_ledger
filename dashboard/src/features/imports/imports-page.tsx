@@ -155,6 +155,19 @@ interface ImportAccountCandidate {
   blockedReason: string | null;
 }
 
+interface LedgerAccountOption {
+  accountType: string;
+  accountId: string;
+  title: string;
+}
+
+interface LedgerEntryOptions {
+  expenseCategories: LedgerAccountOption[];
+  incomeCategories: LedgerAccountOption[];
+  assetAccounts: LedgerAccountOption[];
+  liabilityAccounts: LedgerAccountOption[];
+}
+
 interface GmailPollSummary {
   checkedMessages: number;
   foundAttachments: number;
@@ -229,7 +242,19 @@ function rowMatchesFilter(row: DryRunRow, filter: ImportViewFilter) {
   if (filter === "mapping") return row.status === "mapping_required";
   if (filter === "benefit") return row.cardBenefitStatus !== "not_applicable";
   if (filter === "duplicate") return row.status === "duplicate";
-  return ["possible_update", "possible_delete", "review_required", "conflict", "mapping_required"].includes(row.status);
+  return ["possible_update", "possible_delete", "review_required", "reviewed", "skipped", "conflict", "mapping_required"].includes(row.status);
+}
+
+function isReviewedIncomeCreate(row: DryRunRow) {
+  const category = `${row.transaction.sourceCategoryName ?? ""} ${row.transaction.sourceSubcategoryName ?? ""}`;
+  return row.transaction.entryType === "income"
+    && row.matchedWhooingEntryId === null
+    && ["review_required", "reviewed", "skipped"].includes(row.status)
+    && /(환급|캐시백)/.test(category);
+}
+
+function canSelectForCreate(row: DryRunRow) {
+  return Boolean(row.importRowId && (row.status === "auto_creatable" || isReviewedIncomeCreate(row)));
 }
 
 function hasReviewRows(result: DryRunResult) {
@@ -251,6 +276,8 @@ export function ImportsPage() {
   const [busyActionRowId, setBusyActionRowId] = useState<number | null>(null);
   const [actionHistory, setActionHistory] = useState<ImportActionHistoryItem[]>([]);
   const [accountCandidates, setAccountCandidates] = useState<ImportAccountCandidate[]>([]);
+  const [ledgerEntryOptions, setLedgerEntryOptions] = useState<LedgerEntryOptions | null>(null);
+  const [selectedMappingAccounts, setSelectedMappingAccounts] = useState<Record<string, string>>({});
   const [lastPollSummary, setLastPollSummary] = useState<GmailPollSummary | null>(null);
 
   function refreshRuntimeStatus() {
@@ -270,6 +297,10 @@ export function ImportsPage() {
   useEffect(() => {
     void refreshRuntimeStatus();
     void refreshActionHistory();
+    void fetch("/api/ledger/entry-options", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: LedgerEntryOptions) => setLedgerEntryOptions(payload))
+      .catch(() => setLedgerEntryOptions(null));
   }, []);
 
   async function pollGmail() {
@@ -422,8 +453,10 @@ export function ImportsPage() {
       setMessage("Whooing 원장에 실제 등록할 신규 거래를 선택해 주세요.");
       return;
     }
+    const selectedRows = rows.filter((row) => row.importRowId && selectedRowIds.includes(row.importRowId));
+    const reviewConfirmed = selectedRows.some(isReviewedIncomeCreate);
     if (!window.confirm(
-      `선택한 신규 확정 거래 ${selectedRowIds.length}건을 Whooing 원장에 실제 등록합니다. 수정·삭제는 포함되지 않습니다. 진행할까요?`,
+      `선택한 거래 ${selectedRowIds.length}건을 Whooing 원장에 실제 등록합니다.${reviewConfirmed ? " 검토 수입은 표시된 계정 매핑과 금액으로 등록합니다." : ""} 수정·삭제는 포함되지 않습니다. 진행할까요?`,
     )) return;
     setBusy(true);
     setMessage("");
@@ -431,7 +464,7 @@ export function ImportsPage() {
       const response = await fetch("/api/imports/actions/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ importRowIds: selectedRowIds, confirmed: true }),
+        body: JSON.stringify({ importRowIds: selectedRowIds, confirmed: true, reviewConfirmed }),
       });
       const payload = await response.json() as {
         message?: string;
@@ -613,6 +646,33 @@ export function ImportsPage() {
     } finally {
       setBusyMappingKey("");
     }
+  }
+
+  function mappingAccounts(gap: DryRunResult["mappingGaps"][number]) {
+    if (!ledgerEntryOptions) return [];
+    if (gap.mappingType === "asset") {
+      return [...ledgerEntryOptions.assetAccounts, ...ledgerEntryOptions.liabilityAccounts];
+    }
+    return gap.mappingType === "expense_category"
+      ? ledgerEntryOptions.expenseCategories
+      : ledgerEntryOptions.incomeCategories;
+  }
+
+  function saveSelectedMapping(gap: DryRunResult["mappingGaps"][number]) {
+    const key = `${gap.mappingType}:${gap.sourceKey}`;
+    const selected = mappingAccounts(gap).find((account) => (
+      `${account.accountType}:${account.accountId}` === selectedMappingAccounts[key]
+    ));
+    if (!selected) {
+      setMessage("매핑할 기존 계정을 선택해 주세요.");
+      return;
+    }
+    void saveMapping(gap, {
+      mappingType: gap.mappingType,
+      sourceKey: selected.title,
+      accountType: selected.accountType,
+      accountId: selected.accountId,
+    });
   }
 
   const rows = result ? [...result.rows, ...result.possibleDeletes] : [];
@@ -888,7 +948,7 @@ export function ImportsPage() {
                     <strong>{gap.sourceKey}</strong>
                     <span>{gap.count}건 · {won(gap.amountTotal)} · {gap.entryTypes.join(", ")} · 추천 {recommendedType} · section {candidate?.recommendedSectionId ?? "확인 필요"} · 이름 {candidate?.recommendedTitle ?? gap.sourceKey}</span>
                     <div className="import-mapping-actions">
-                      {gap.suggestions.length > 0 ? gap.suggestions.map((suggestion) => (
+                      {gap.suggestions.map((suggestion) => (
                         <Button
                           key={`${suggestion.accountType}:${suggestion.accountId}`}
                           size="sm"
@@ -898,14 +958,40 @@ export function ImportsPage() {
                         >
                           {suggestion.sourceKey}에 매핑
                         </Button>
-                      )) : <Button
+                      ))}
+                      <label>
+                        <span className="sr-only">{gap.sourceKey} 매핑 대상</span>
+                        <select
+                          value={selectedMappingAccounts[`${gap.mappingType}:${gap.sourceKey}`] ?? ""}
+                          onChange={(event) => setSelectedMappingAccounts((current) => ({
+                            ...current,
+                            [`${gap.mappingType}:${gap.sourceKey}`]: event.target.value,
+                          }))}
+                        >
+                          <option value="">기존 계정 선택</option>
+                          {mappingAccounts(gap).map((account) => (
+                            <option key={`${account.accountType}:${account.accountId}`} value={`${account.accountType}:${account.accountId}`}>
+                              {account.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busyMappingKey === `${gap.mappingType}:${gap.sourceKey}` || !selectedMappingAccounts[`${gap.mappingType}:${gap.sourceKey}`] || !actionExecutionSupported}
+                        onClick={() => saveSelectedMapping(gap)}
+                      >
+                        기존 계정에 매핑
+                      </Button>
+                      {gap.suggestions.length === 0 ? <Button
                         size="sm"
                         variant="secondary"
                         disabled={busyMappingKey === `${gap.mappingType}:${gap.sourceKey}` || !accountCreateEnabled || dryRunOnly || candidate?.canCreate === false || /(?:신용|체크)?카드|credit/i.test(gap.sourceKey)}
                         onClick={() => createAccount(gap)}
                       >
                         {/(?:신용|체크)?카드|credit/i.test(gap.sourceKey) ? "카드 계정 수동 설정 필요" : accountCreateEnabled ? "새 계정 생성 승인" : "계정 생성 비활성"}
-                      </Button>}
+                      </Button> : null}
                     </div>
                     </>;
                     })()}
@@ -948,10 +1034,10 @@ export function ImportsPage() {
                 <tbody>{filteredRows.map((row, index) => {
                   const status = labels[row.status];
                   return <tr key={`${row.transaction.sourceRowIndexes.join("-")}-${row.status}-${index}`}>
-                    <td>{row.status === "auto_creatable" && row.importRowId ? <input
+                    <td>{canSelectForCreate(row) ? <input
                       type="checkbox"
-                      aria-label={`${row.transaction.item} 신규 등록 선택`}
-                      checked={selectedRowIds.includes(row.importRowId)}
+                      aria-label={`${row.transaction.item} ${isReviewedIncomeCreate(row) ? "검토 후" : "신규"} 등록 선택`}
+                      checked={selectedRowIds.includes(row.importRowId as number)}
                       onChange={(event) => setSelectedRowIds((current) => event.target.checked
                         ? [...new Set([...current, row.importRowId as number])]
                         : current.filter((id) => id !== row.importRowId))}
@@ -993,6 +1079,8 @@ export function ImportsPage() {
                           </div>
                           : row.status === "auto_creatable"
                           ? <span className="metric-detail">{row.importRowId ? "선택 후 등록" : "검토 batch 저장 필요"}</span>
+                          : isReviewedIncomeCreate(row)
+                            ? <span className="metric-detail">검토 후 등록</span>
                           : ["conflict", "review_required", "mapping_required"].includes(row.status)
                             ? <div className="import-actions">
                               <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "review")}>검토 완료</Button>

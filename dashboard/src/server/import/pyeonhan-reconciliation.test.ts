@@ -922,7 +922,10 @@ test("refund cashback and support coupon adjustment remain explicit review-only 
         sourceIdentityKey: "coupon-1",
       }),
     ],
-    mappings,
+    mappings: [
+      ...mappings,
+      { mappingType: "income_category", sourceKey: "환급 / 캐시백", accountType: "income", accountId: "i-cashback", confidence: 1 },
+    ],
     mirrorEntries: [],
     previousRows: [],
   });
@@ -931,6 +934,25 @@ test("refund cashback and support coupon adjustment remain explicit review-only 
   assert.match(result.rows[0].reason, /수입 의미가 섞여 있어 수동 정책 필요/);
   assert.match(result.rows[1].reason, /balance adjustment.*지원금\/쿠폰 처리 정책 필요/);
   assert.equal(result.summary.autoCreatable, 0);
+});
+
+test("refund income reports its missing category mapping before manual review", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      entryType: "income",
+      sourceCategoryName: "환급",
+      sourceSubcategoryName: "캐시백",
+      sourceIdentityKey: "refund-mapping",
+    })],
+    mappings,
+    mirrorEntries: [],
+    previousRows: [],
+  });
+
+  assert.equal(result.rows[0].status, "mapping_required");
+  assert.equal(result.mappingGaps.length, 1);
+  assert.equal(result.mappingGaps[0].mappingType, "income_category");
+  assert.equal(result.mappingGaps[0].sourceKey, "환급 / 캐시백");
 });
 
 test("discount review rows retain matching mirror evidence", () => {

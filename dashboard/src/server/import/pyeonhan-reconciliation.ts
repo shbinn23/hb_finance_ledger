@@ -578,9 +578,12 @@ export function reconcilePyeonhanTransactions({
       base.cardBenefitStatus = "needs_review";
     }
     const manualReason = manualReviewReason(transaction);
-    if (manualReason) return { ...base, status: "review_required", reason: manualReason };
+    if (manualReason && transaction.entryType === "difference_income") {
+      return { ...base, status: "review_required", reason: manualReason };
+    }
     const gap = mappingGap(transaction, mapping);
     if (gap) return { ...base, status: "mapping_required", reason: gap };
+    if (manualReason) return { ...base, status: "review_required", reason: manualReason };
     if (transaction.entryType === "transfer" && !transaction.transferPairComplete) {
       return { ...base, reason: "이체 입금/출금 pair를 모두 찾지 못했습니다." };
     }

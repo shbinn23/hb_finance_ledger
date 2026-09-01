@@ -38,7 +38,15 @@ function parseConfirmedRowIds(value: unknown): ParseResult<{ importRowIds: numbe
 }
 
 export function parseImportCreateRequest(value: unknown) {
-  return parseConfirmedRowIds(value);
+  const rows = parseConfirmedRowIds(value);
+  if (!rows.ok) return rows;
+  return {
+    ok: true as const,
+    value: {
+      ...rows.value,
+      reviewConfirmed: (value as Record<string, unknown>).reviewConfirmed === true,
+    },
+  };
 }
 
 export function parseImportUpdateRequest(value: unknown): ParseResult<{ importRowId: number }> {
