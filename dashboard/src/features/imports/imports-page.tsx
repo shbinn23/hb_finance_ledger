@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 type ImportStatus = "auto_creatable" | "duplicate" | "mapping_required" | "possible_update"
   | "possible_delete" | "conflict" | "review_required" | "created" | "updated"
-  | "skipped" | "reviewed" | "write_failed";
+  | "deleted" | "skipped" | "reviewed" | "write_failed";
 type ImportViewFilter = "all" | "new" | "update" | "transfer" | "mapping"
   | "benefit" | "review" | "duplicate";
 type BenefitStatus = "not_applicable" | "rule_matched" | "rule_uncertain" | "event_exists"
@@ -68,6 +68,7 @@ interface DryRunResult {
     benefitReviewSupported: boolean;
     autoApplySupported: boolean;
     actionExecutionSupported: boolean;
+    deleteExecutionSupported: boolean;
   };
   rows: DryRunRow[];
   possibleDeletes: DryRunRow[];
@@ -169,6 +170,7 @@ const labels: Record<ImportStatus, { label: string; tone: "stable" | "watch" | "
   review_required: { label: "검토 필요", tone: "watch" },
   created: { label: "등록 완료", tone: "stable" },
   updated: { label: "수정 완료", tone: "stable" },
+  deleted: { label: "삭제 완료", tone: "neutral" },
   skipped: { label: "건너뜀", tone: "neutral" },
   reviewed: { label: "검토 완료", tone: "neutral" },
   write_failed: { label: "처리 실패", tone: "over" },
@@ -203,7 +205,11 @@ function rowMatchesFilter(row: DryRunRow, filter: ImportViewFilter) {
   if (filter === "mapping") return row.status === "mapping_required";
   if (filter === "benefit") return row.cardBenefitStatus !== "not_applicable";
   if (filter === "duplicate") return row.status === "duplicate";
-  return row.status === "review_required" || row.status === "conflict";
+  return ["possible_update", "possible_delete", "review_required", "conflict", "mapping_required"].includes(row.status);
+}
+
+function hasReviewRows(result: DryRunResult) {
+  return [...result.rows, ...result.possibleDeletes].some((row) => rowMatchesFilter(row, "review"));
 }
 
 export function ImportsPage() {
@@ -274,6 +280,7 @@ export function ImportsPage() {
         setAccountCandidates(payload.accountCreateCandidates ?? []);
         if (payload.latestBatch) {
           setResult(payload.latestBatch);
+          if (hasReviewRows(payload.latestBatch)) setViewFilter("review");
           setSelectedRowIds([]);
         }
         await refreshRuntimeStatus();
@@ -319,6 +326,7 @@ export function ImportsPage() {
       setMessage(payload.message ?? (response.ok ? "계정 생성과 매핑을 완료했습니다." : "계정 생성에 실패했습니다."));
       if (response.ok && payload.reevaluation?.latestBatch) {
         setResult(payload.reevaluation.latestBatch);
+        if (hasReviewRows(payload.reevaluation.latestBatch)) setViewFilter("review");
         setAccountCandidates(payload.reevaluation.accountCreateCandidates ?? []);
         setLastPollSummary({
           checkedMessages: payload.reevaluation.checkedMessages ?? 0,
@@ -363,7 +371,9 @@ export function ImportsPage() {
         return;
       }
       if (mode !== "apply") {
-        setResult(payload as DryRunResult);
+        const nextResult = payload as DryRunResult;
+        setResult(nextResult);
+        if (hasReviewRows(nextResult)) setViewFilter("review");
         setSelectedRowIds([]);
       }
       setMessage(payload.message ?? (mode === "dry-run" ? "dry-run 비교를 완료했습니다." : "요청을 완료했습니다."));
@@ -443,6 +453,37 @@ export function ImportsPage() {
       await refreshActionHistory();
     } catch {
       setMessage("Whooing 거래 수정 요청 중 오류가 발생했습니다.");
+    } finally {
+      setBusyActionRowId(null);
+    }
+  }
+
+  async function approveDelete(row: DryRunRow) {
+    if (!row.importRowId) return;
+    const confirmationText = window.prompt(
+      `${row.transaction.occurredDate} · ${row.transaction.sourceAssetName} · ${row.transaction.item} · ${won(row.transaction.postingAmount)}\nmirror #${row.matchedWhooingEntryId ?? "-"} 거래를 Whooing 원장에서 영구 삭제합니다. 되돌릴 수 없습니다. 진행하려면 "원장 거래 삭제"를 입력하세요.`,
+    );
+    if (confirmationText !== "원장 거래 삭제") return;
+    setBusyActionRowId(row.importRowId);
+    setMessage("");
+    try {
+      const response = await fetch("/api/imports/actions/approve-delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          importRowId: row.importRowId,
+          confirmed: true,
+          confirmationText,
+        }),
+      });
+      const payload = await response.json() as { status?: string; message?: string };
+      if (response.ok && (payload.status === "deleted" || payload.status === "reused")) {
+        updateRowStatus(row.importRowId, "deleted");
+      }
+      setMessage(payload.message ?? (response.ok ? "Whooing 거래 삭제를 완료했습니다." : "Whooing 거래 삭제에 실패했습니다."));
+      await refreshActionHistory();
+    } catch {
+      setMessage("Whooing 거래 삭제 요청 중 오류가 발생했습니다.");
     } finally {
       setBusyActionRowId(null);
     }
@@ -571,6 +612,7 @@ export function ImportsPage() {
   ].includes(row.status)).length ?? 0;
   const dryRunOnly = runtimeStatus?.gmailImport.dryRunOnly ?? true;
   const actionExecutionSupported = result?.schema.actionExecutionSupported ?? false;
+  const deleteExecutionSupported = result?.schema.deleteExecutionSupported ?? false;
   const autoExecuteEnabled = runtimeStatus?.gmailImport.autoExecuteEnabled ?? false;
   const accountCreateEnabled = runtimeStatus?.gmailImport.accountCreateEnabled ?? false;
 
@@ -670,8 +712,15 @@ export function ImportsPage() {
           ) : null}
           <div className="import-warning import-policy-note">
             <AlertTriangle size={17} />
-            <p>자동 삭제는 지원하지 않습니다. 새 계정은 명확한 후보를 사용자가 승인한 경우에만 생성합니다. 수정 후보는 단건 승인, 삭제·충돌·환급·캐시백·민생지원쿠폰은 review-only입니다.</p>
+            <p>자동 삭제는 지원하지 않습니다. 새 계정은 명확한 후보를 사용자가 승인한 경우에만 생성합니다. 수정과 삭제는 단건 승인, 충돌·환급·캐시백·민생지원쿠폰은 review-only입니다.</p>
           </div>
+
+          {rows.some((row) => rowMatchesFilter(row, "review")) ? (
+            <div className="import-feedback" role="status">
+              <strong>검토 대기 {rows.filter((row) => rowMatchesFilter(row, "review")).length}건</strong>
+              <p>수정·삭제 후보와 충돌 내역을 아래 표에서 확인한 뒤 각 행의 액션을 승인하세요.</p>
+            </div>
+          ) : null}
 
           {result.summary.benefitCandidates === 0
             && result.summary.benefitExisting > 0
@@ -802,7 +851,7 @@ export function ImportsPage() {
             <CardHeader>
               <CardDescription>{result.startDate}~{result.endDate}</CardDescription>
               <div className="metric-card-top">
-                <CardTitle>거래 비교 결과</CardTitle>
+                <CardTitle>{viewFilter === "review" ? "검토 대기 내역" : "거래 비교 결과"}</CardTitle>
                 <div className="import-actions">
                   <label><span className="sr-only">검토 필터</span><select value={viewFilter} onChange={(event) => setViewFilter(event.target.value as ImportViewFilter)}>
                     <option value="all">전체</option>
@@ -821,7 +870,7 @@ export function ImportsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <p className="metric-detail">신규 확정 거래 자동 등록은 선택한 저장 row만 수행합니다. 수정은 단건 승인하며 삭제 후보는 표시만 합니다. dry-run-only에서는 원장 등록이 비활성화됩니다.</p>
+              <p className="metric-detail">신규 확정 거래 자동 등록은 선택한 저장 row만 수행합니다. 수정과 삭제는 단건 승인하며 원본 최신 상태를 다시 확인합니다. dry-run-only에서는 원장 변경이 비활성화됩니다.</p>
               <div className="table-scroll"><table className="data-table import-table">
                 <thead><tr>
                   <th>선택</th><th>원본 행</th><th>날짜</th><th>유형</th><th>자산</th><th>내용</th>
@@ -869,9 +918,14 @@ export function ImportsPage() {
                           <Button size="sm" disabled={!row.importRowId || busyActionRowId === row.importRowId || dryRunOnly || !actionExecutionSupported} onClick={() => approveUpdate(row)}>수정 승인</Button>
                           <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "review")}>검토 완료</Button>
                         </div>
-                        : row.status === "auto_creatable"
+                        : row.status === "possible_delete"
+                          ? <div className="import-actions">
+                            <Button size="sm" disabled={!row.importRowId || busyActionRowId === row.importRowId || dryRunOnly || !deleteExecutionSupported} onClick={() => approveDelete(row)}>삭제 승인</Button>
+                            <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "review")}>검토 완료</Button>
+                          </div>
+                          : row.status === "auto_creatable"
                           ? <span className="metric-detail">{row.importRowId ? "선택 후 등록" : "검토 batch 저장 필요"}</span>
-                          : ["possible_delete", "conflict", "review_required", "mapping_required"].includes(row.status)
+                          : ["conflict", "review_required", "mapping_required"].includes(row.status)
                             ? <div className="import-actions">
                               <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "review")}>검토 완료</Button>
                               <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "skip")}>건너뜀</Button>

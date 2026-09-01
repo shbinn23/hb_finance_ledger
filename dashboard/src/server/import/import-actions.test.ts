@@ -4,6 +4,7 @@ import {
   importActionOriginIsAllowed,
   importWritesAreDryRunOnly,
   parseImportCreateRequest,
+  parseImportDeleteRequest,
   parseImportBenefitRequest,
   parseImportAccountCreateRequest,
   parseImportMappingRequest,
@@ -89,6 +90,20 @@ test("update and review approvals validate their explicit action", () => {
     value: { importRowIds: [4], action: "skip" },
   });
   assert.equal(parseImportReviewRequest({ confirmed: true, importRowIds: [4], action: "delete" }).ok, false);
+});
+
+test("delete approval requires the explicit destructive confirmation phrase", () => {
+  assert.deepEqual(parseImportDeleteRequest({
+    confirmed: true,
+    confirmationText: "원장 거래 삭제",
+    importRowId: 4,
+  }), { ok: true, value: { importRowId: 4 } });
+  assert.equal(parseImportDeleteRequest({ confirmed: true, importRowId: 4 }).ok, false);
+  assert.equal(parseImportDeleteRequest({
+    confirmed: true,
+    confirmationText: "삭제",
+    importRowId: 4,
+  }).ok, false);
 });
 
 test("benefit approval requires confirmation, row id, and rule id", () => {

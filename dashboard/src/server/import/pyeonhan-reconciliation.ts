@@ -1,4 +1,4 @@
-import type { NormalizedPyeonhanTransaction } from "./pyeonhan-types.ts";
+import type { NormalizedPyeonhanTransaction, PyeonhanEntryType } from "./pyeonhan-types.ts";
 import {
   identifyPyeonhanCardBenefitCandidate,
   type PyeonhanCardBenefitCandidate,
@@ -52,10 +52,11 @@ export interface MirrorEntry {
 export interface PreviousImportRow {
   sourceIdentityKey: string;
   sourceContentHash: string;
+  occurrenceIndex?: number;
   status: string;
   matchedWhooingEntryId: number | null;
   occurredDate?: string;
-  entryType?: string;
+  entryType?: PyeonhanEntryType;
   sourceAssetName?: string;
   counterpartyAssetName?: string | null;
   sourceCategoryName?: string | null;
@@ -181,6 +182,15 @@ function revisionCandidateScore(
   const sameAsset = normalize(transaction.sourceAssetName) === normalize(previous.sourceAssetName);
   const sameItem = normalize(transaction.item) === normalize(previous.item);
   const samePosting = transaction.postingAmount === previous.postingAmount;
+  const sameNonAccountEvidence = sameDate
+    && sameItem
+    && samePosting
+    && transaction.approvalAmount === previous.approvalAmount
+    && normalize(transaction.counterpartyAssetName) === normalize(previous.counterpartyAssetName)
+    && normalize(transaction.sourceCategoryName) === normalize(previous.sourceCategoryName)
+    && normalize(transaction.sourceSubcategoryName) === normalize(previous.sourceSubcategoryName)
+    && normalize(transaction.memo) === normalize(previous.memo);
+  if (sameNonAccountEvidence) return 4;
   if (sameDate && sameAsset && sameItem) return 4;
   if (sameDate && sameAsset) return 3;
   if (sameItem && sameAsset) return 2;
@@ -382,22 +392,24 @@ function benefitEventIntegrity(
 }
 
 function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
+  const postingAmount = previous.postingAmount ?? 0;
+  const approvalAmount = previous.approvalAmount ?? postingAmount;
   return {
     transaction: {
       sourceRowIndexes: [],
-      occurredDate: "",
-      entryType: "expense",
-      sourceAssetName: "",
-      counterpartyAssetName: null,
-      sourceCategoryName: null,
-      sourceSubcategoryName: null,
-      item: "",
-      memo: "",
-      postingAmount: 0,
-      approvalAmount: 0,
-      discountAmount: 0,
+      occurredDate: previous.occurredDate ?? "",
+      entryType: previous.entryType ?? "expense",
+      sourceAssetName: previous.sourceAssetName ?? "",
+      counterpartyAssetName: previous.counterpartyAssetName ?? null,
+      sourceCategoryName: previous.sourceCategoryName ?? null,
+      sourceSubcategoryName: previous.sourceSubcategoryName ?? null,
+      item: previous.item ?? "",
+      memo: previous.memo ?? "",
+      postingAmount,
+      approvalAmount,
+      discountAmount: approvalAmount - postingAmount,
       currency: "KRW",
-      occurrenceIndex: 0,
+      occurrenceIndex: previous.occurrenceIndex ?? 1,
       sourceIdentityKey: previous.sourceIdentityKey,
       sourceContentHash: previous.sourceContentHash,
       transferPairComplete: true,

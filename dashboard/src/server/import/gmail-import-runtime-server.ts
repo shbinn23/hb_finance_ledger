@@ -48,6 +48,13 @@ function reviewBatchResult(
         row.transaction.occurrenceIndex,
       )) ?? null,
     })),
+    possibleDeletes: dryRun.possibleDeletes.map((row) => ({
+      ...row,
+      importRowId: input.rowIds.get(importRowReferenceKey(
+        row.transaction.sourceIdentityKey,
+        row.transaction.occurrenceIndex,
+      )) ?? null,
+    })),
   };
 }
 

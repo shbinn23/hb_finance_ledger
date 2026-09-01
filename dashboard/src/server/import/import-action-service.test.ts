@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   executeApprovedImportCreates,
+  executeApprovedImportDelete,
   executeApprovedImportUpdate,
   executeImportReviewAction,
   type ImportActionRow,
@@ -354,6 +355,107 @@ test("update rejects a stale mirror before Whooing PUT", async () => {
 
   assert.equal(result.status, "rejected");
   assert.equal(updates, 0);
+});
+
+test("approved delete revalidates the exact mirror snapshot before Whooing DELETE", async () => {
+  const deleteRow = row({
+    status: "possible_delete",
+    matchedWhooingEntryId: 91,
+    mirrorEntry: mirrorEntry(),
+  });
+  const fixture = dependencies([deleteRow]);
+  const deleted: unknown[] = [];
+  const synced: string[] = [];
+
+  const result = await executeApprovedImportDelete({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getCurrentEntry: async () => mirrorEntry(),
+      deleteEntry: async (entryId, sectionId) => { deleted.push({ entryId, sectionId }); },
+      syncForDate: async (date) => { synced.push(date); },
+      hasBenefitEvent: async () => false,
+    },
+  });
+
+  assert.equal(result.status, "deleted");
+  assert.deepEqual(deleted, [{ entryId: 91, sectionId: "s1" }]);
+  assert.deepEqual(synced, ["2026-08-14"]);
+  assert.deepEqual(fixture.finished, [{
+    rowId: 1,
+    operationType: "delete",
+    operationKey: result.operationKey,
+    status: "created",
+    whooingEntryId: 91,
+    errorMessage: null,
+    rowStatus: "deleted",
+  }]);
+});
+
+test("approved delete rejects stale mirrors and linked card benefit events", async () => {
+  const deleteRow = row({
+    status: "possible_delete",
+    matchedWhooingEntryId: 91,
+    mirrorEntry: mirrorEntry(),
+  });
+  const fixture = dependencies([deleteRow]);
+  let deletes = 0;
+  const stale = await executeApprovedImportDelete({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getCurrentEntry: async () => mirrorEntry({ amount: 9100 }),
+      deleteEntry: async () => { deletes += 1; },
+      syncForDate: async () => undefined,
+      hasBenefitEvent: async () => false,
+    },
+  });
+  const linked = await executeApprovedImportDelete({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getCurrentEntry: async () => mirrorEntry(),
+      deleteEntry: async () => { deletes += 1; },
+      syncForDate: async () => undefined,
+      hasBenefitEvent: async () => true,
+    },
+  });
+
+  assert.equal(stale.status, "rejected");
+  assert.equal(linked.status, "rejected");
+  assert.match(linked.message, /카드혜택 event/);
+  assert.equal(deletes, 0);
+});
+
+test("stale failed delete finalizes when the remote entry is already absent", async () => {
+  const deleteRow = row({
+    status: "write_failed",
+    matchedWhooingEntryId: 91,
+    mirrorEntry: mirrorEntry(),
+  });
+  const fixture = dependencies([deleteRow], {
+    operationKey: `pyeonhan-delete:${"ignored"}`,
+    status: "failed",
+    whooingEntryId: 91,
+    errorMessage: "interrupted",
+  });
+  let deleteCalls = 0;
+  const result = await executeApprovedImportDelete({
+    rowId: 1,
+    dependencies: {
+      ...fixture.dependencies,
+      getCurrentEntry: async () => {
+        throw Object.assign(new Error("not found"), { status: 404 });
+      },
+      deleteEntry: async () => { deleteCalls += 1; },
+      syncForDate: async () => undefined,
+      hasBenefitEvent: async () => false,
+    },
+  });
+
+  assert.equal(result.status, "deleted");
+  assert.equal(deleteCalls, 0);
+  assert.equal((fixture.finished[0] as { rowStatus: string }).rowStatus, "deleted");
 });
 
 test("identical content revisions with different occurrences use distinct update operations", async () => {

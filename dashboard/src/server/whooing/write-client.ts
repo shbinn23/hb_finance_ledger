@@ -86,7 +86,7 @@ function genericFormBody(payload: object) {
   return params;
 }
 
-function safeApiError(payload: WhooingApiResponse, action: "creation" | "update") {
+function safeApiError(payload: WhooingApiResponse, action: "creation" | "update" | "deletion") {
   const message = payload.message ? `: ${payload.message}` : "";
   return `Whooing API rejected entry ${action}${message}`;
 }
@@ -196,6 +196,30 @@ export async function updateWhooingEntry(
   const data = await response.json() as WhooingApiResponse;
   if (data.code !== undefined && data.code !== 200) {
     throw new WhooingWriteClientError(safeApiError(data, "update"));
+  }
+  return data;
+}
+
+export async function deleteWhooingEntry(
+  entryId: number,
+  sectionId: string,
+): Promise<WhooingApiResponse> {
+  if (!Number.isSafeInteger(entryId) || entryId <= 0 || !sectionId.trim()) {
+    throw new WhooingWriteClientError("Invalid Whooing entry deletion");
+  }
+  const response = await fetch(
+    `${WHOOING_API_BASE_URL}/entries/${entryId}/${encodeURIComponent(sectionId)}.json`,
+    {
+      method: "DELETE",
+      headers: { "X-API-KEY": whooingApiKey() },
+    },
+  );
+  if (!response.ok) {
+    throw new WhooingWriteClientError("Whooing entry deletion request failed", response.status);
+  }
+  const data = await response.json() as WhooingApiResponse;
+  if (data.code !== undefined && data.code !== 200) {
+    throw new WhooingWriteClientError(safeApiError(data, "deletion"));
   }
   return data;
 }

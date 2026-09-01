@@ -15,6 +15,15 @@ test("live import create and update routes are protected by dry-run policy", () 
   assert.match(update, /parseImportUpdateRequest/);
 });
 
+test("approved delete route requires strong confirmation and the standard write guards", () => {
+  const removal = readFileSync(resolve(app, "actions/approve-delete/route.ts"), "utf8");
+  assert.match(removal, /parseImportDeleteRequest/);
+  assert.match(removal, /importActionOriginIsAllowed/);
+  assert.match(removal, /importWritesAreDryRunOnly/);
+  assert.match(removal, /getImportSchemaStatus/);
+  assert.match(removal, /executeRuntimeApprovedImportDelete/);
+});
+
 test("legacy bulk apply route is retired so it cannot bypass row approval operations", () => {
   const legacyApply = readFileSync(resolve(app, "pyeonhan/apply/route.ts"), "utf8");
   assert.match(legacyApply, /status: 410/);

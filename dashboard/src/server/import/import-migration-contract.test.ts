@@ -24,6 +24,10 @@ const importAccountCreateOperations = readFileSync(
   resolve(migrationRoot, "009_add_import_account_create_operations.sql"),
   "utf8",
 );
+const importDeleteOperations = readFileSync(
+  resolve(migrationRoot, "010_add_import_delete_operations.sql"),
+  "utf8",
+);
 const importRepository = readFileSync(
   resolve(import.meta.dirname, "import-repository.ts"),
   "utf8",
@@ -107,4 +111,15 @@ test("account creation migration is transactional and resumable", () => {
   assert.match(importAccountCreateOperations, /operation_type in \('mapping', 'account_create'\)/);
   assert.doesNotMatch(importAccountCreateOperations, /drop table/i);
   assert.match(importAccountCreateOperations, /commit;\s*$/i);
+});
+
+test("manual delete migration is additive, transactional, and records terminal deletion", () => {
+  assert.match(importDeleteOperations, /^begin;/i);
+  assert.match(importDeleteOperations, /add column if not exists review_mirror_entry_id bigint/);
+  assert.match(importDeleteOperations, /import_rows_review_mirror_snapshot_check/);
+  assert.match(importDeleteOperations, /'delete'/);
+  assert.match(importDeleteOperations, /'deleted'/);
+  assert.match(importDeleteOperations, /where operation_type in \('create', 'benefit', 'delete'\)/);
+  assert.doesNotMatch(importDeleteOperations, /drop table/i);
+  assert.match(importDeleteOperations, /commit;\s*$/i);
 });

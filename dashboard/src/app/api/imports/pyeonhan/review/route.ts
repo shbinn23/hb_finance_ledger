@@ -3,6 +3,7 @@ import {
   createImportReviewBatch,
   getLatestReviewRowReferences,
   importRowReferenceKey,
+  refreshImportReviewBatch,
 } from "@/server/import/import-repository";
 import {
   buildPyeonhanDryRun,
@@ -25,20 +26,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, message: "import review migration 적용이 필요합니다." }, { status: 503 });
     }
     const existing = await getLatestReviewRowReferences(dryRun.sourceFileHash);
-    const review = existing ?? await createImportReviewBatch({
-      filename: file.name,
-      sourceFileHash: dryRun.sourceFileHash,
-      startDate: dryRun.startDate,
-      endDate: dryRun.endDate,
-      rows: dryRun.rows,
-      possibleDeletes: dryRun.possibleDeletes,
-    });
+    const review = existing
+      ? {
+        ...existing,
+        rowIds: await refreshImportReviewBatch({
+          batchId: existing.batchId,
+          sourceFileHash: dryRun.sourceFileHash,
+          rows: dryRun.rows,
+          possibleDeletes: dryRun.possibleDeletes,
+        }),
+      }
+      : await createImportReviewBatch({
+        filename: file.name,
+        sourceFileHash: dryRun.sourceFileHash,
+        startDate: dryRun.startDate,
+        endDate: dryRun.endDate,
+        rows: dryRun.rows,
+        possibleDeletes: dryRun.possibleDeletes,
+      });
     return NextResponse.json({
       ok: true,
       ...dryRun,
       batchId: review.batchId,
       reused: Boolean(existing),
       rows: dryRun.rows.map((row) => ({
+        ...row,
+        importRowId: review.rowIds.get(importRowReferenceKey(
+          row.transaction.sourceIdentityKey,
+          row.transaction.occurrenceIndex,
+        )) ?? null,
+      })),
+      possibleDeletes: dryRun.possibleDeletes.map((row) => ({
         ...row,
         importRowId: review.rowIds.get(importRowReferenceKey(
           row.transaction.sourceIdentityKey,

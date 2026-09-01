@@ -23,6 +23,7 @@ export interface ImportSchemaStatus {
   benefitReviewSupported: boolean;
   autoApplySupported: boolean;
   actionExecutionSupported: boolean;
+  deleteExecutionSupported: boolean;
 }
 
 function compactDate(value: string) {
@@ -39,6 +40,7 @@ export async function getImportSchemaStatus(): Promise<ImportSchemaStatus> {
     ledger_operations: boolean;
     benefit_review: boolean;
     action_operations: boolean;
+    delete_operations: boolean;
   }>(
     `
     select
@@ -59,19 +61,46 @@ export async function getImportSchemaStatus(): Promise<ImportSchemaStatus> {
         where table_schema = 'app'
           and table_name = 'import_write_operations'
           and column_name in ('mapping_type', 'source_key')
-      ) as action_operations
+      ) as action_operations,
+      exists (
+        select 1
+        from pg_constraint
+        where connamespace = 'app'::regnamespace
+          and conname = 'import_write_operations_operation_type_check'
+          and pg_get_constraintdef(oid) like '%delete%'
+      ) and exists (
+        select 1
+        from pg_constraint
+        where connamespace = 'app'::regnamespace
+          and conname = 'import_rows_status_check'
+          and pg_get_constraintdef(oid) like '%deleted%'
+      ) and (
+        select count(*) = 10
+        from information_schema.columns
+        where table_schema = 'app'
+          and table_name = 'import_rows'
+          and column_name in (
+            'review_mirror_section_id', 'review_mirror_entry_id',
+            'review_mirror_occurred_date', 'review_mirror_l_account',
+            'review_mirror_l_account_id', 'review_mirror_r_account',
+            'review_mirror_r_account_id', 'review_mirror_item',
+            'review_mirror_memo', 'review_mirror_amount'
+          )
+      ) as delete_operations
     `,
   );
   const importTablesAvailable = result.rows[0]?.import_tables ?? false;
   const ledgerOperationsAvailable = result.rows[0]?.ledger_operations ?? false;
   const benefitReviewSupported = result.rows[0]?.benefit_review ?? false;
   const actionExecutionSupported = result.rows[0]?.action_operations ?? false;
+  const deleteExecutionSupported = result.rows[0]?.delete_operations ?? false;
   return {
     importTablesAvailable,
     ledgerOperationsAvailable,
     benefitReviewSupported,
     autoApplySupported: importTablesAvailable && ledgerOperationsAvailable,
     actionExecutionSupported: importTablesAvailable && ledgerOperationsAvailable && actionExecutionSupported,
+    deleteExecutionSupported: importTablesAvailable && ledgerOperationsAvailable && deleteExecutionSupported,
   };
 }
 
@@ -210,11 +239,12 @@ export async function getPreviousImportRowsForRange(
   const result = await query<{
     source_identity_key: string;
     source_content_hash: string;
+    occurrence_index: number;
     status: string;
     matched_whooing_entry_id: number | null;
     created_whooing_entry_id: number | null;
     occurred_date: string;
-    entry_type: string;
+    entry_type: NonNullable<PreviousImportRow["entryType"]>;
     source_asset_name: string;
     counterparty_asset_name: string | null;
     source_category_name: string | null;
@@ -225,23 +255,26 @@ export async function getPreviousImportRowsForRange(
     approval_amount: string;
   }>(
     `
-    select distinct on (source_identity_key)
-      source_identity_key, source_content_hash, status,
-      matched_whooing_entry_id, created_whooing_entry_id,
-      occurred_date::text, entry_type, source_asset_name, counterparty_asset_name,
-      source_category_name, source_subcategory_name, item, memo,
-      posting_amount::text, approval_amount::text
-    from app.import_rows
-    where occurred_date between $1::date and $2::date
-      and status in ('created', 'updated', 'duplicate')
-      and coalesce(created_whooing_entry_id, matched_whooing_entry_id) is not null
-    order by source_identity_key, created_at desc
+    select distinct on (coalesce(r.created_whooing_entry_id, r.matched_whooing_entry_id))
+      r.source_identity_key, r.source_content_hash, r.occurrence_index, r.status,
+      r.matched_whooing_entry_id, r.created_whooing_entry_id,
+      r.occurred_date::text, r.entry_type, r.source_asset_name, r.counterparty_asset_name,
+      r.source_category_name, r.source_subcategory_name, r.item, r.memo,
+      r.posting_amount::text, r.approval_amount::text
+    from app.import_rows r
+    join app.import_batches b on b.id = r.batch_id
+    where r.occurred_date between $1::date and $2::date
+      and r.status in ('created', 'updated', 'duplicate')
+      and coalesce(r.created_whooing_entry_id, r.matched_whooing_entry_id) is not null
+    order by coalesce(r.created_whooing_entry_id, r.matched_whooing_entry_id),
+             b.created_at desc, r.created_at desc, r.id desc
     `,
     [startDate, endDate],
   );
   return result.rows.map((row) => ({
     sourceIdentityKey: row.source_identity_key,
     sourceContentHash: row.source_content_hash,
+    occurrenceIndex: row.occurrence_index,
     status: row.status,
     matchedWhooingEntryId: row.created_whooing_entry_id ?? row.matched_whooing_entry_id,
     occurredDate: row.occurred_date,
@@ -359,6 +392,11 @@ export async function createImportBatch(input: {
     ? schema.importTablesAvailable && schema.benefitReviewSupported
     : schema.autoApplySupported && schema.benefitReviewSupported;
   if (!schemaAvailable) throw new Error("import_schema_unavailable");
+  const persistedRows = [...input.rows, ...input.possibleDeletes];
+  const maximumSourceRowIndex = Math.max(
+    0,
+    ...input.rows.flatMap((row) => row.transaction.sourceRowIndexes),
+  );
   const reviewCount = input.rows.filter((row) => !["auto_creatable", "duplicate"].includes(row.status)).length
     + input.possibleDeletes.length;
   return withTransaction(async (transactionQuery) => {
@@ -400,8 +438,12 @@ export async function createImportBatch(input: {
     );
     const batchId = Number(batch.rows[0].id);
     const rowIds = new Map<string, number>();
-    for (const row of input.rows) {
+    for (const [position, row] of persistedRows.entries()) {
       const transaction = row.transaction;
+      const deletePosition = position - input.rows.length;
+      const rowIndex = row.status === "possible_delete"
+        ? maximumSourceRowIndex + deletePosition + 1
+        : transaction.sourceRowIndexes[0] ?? 1;
       const inserted = await transactionQuery<{ id: string }>(
         `
         insert into app.import_rows (
@@ -417,7 +459,7 @@ export async function createImportBatch(input: {
         ) returning id::text
         `,
         [
-          batchId, transaction.sourceRowIndexes[0] ?? 1, transaction.occurrenceIndex,
+          batchId, rowIndex, transaction.occurrenceIndex,
           transaction.sourceIdentityKey, transaction.sourceContentHash, transaction.occurredDate,
           transaction.entryType, transaction.sourceAssetName, transaction.counterpartyAssetName,
           transaction.sourceCategoryName, transaction.sourceSubcategoryName, transaction.item,
@@ -436,6 +478,11 @@ export async function createImportBatch(input: {
       rowIds.set(
         importRowReferenceKey(transaction.sourceIdentityKey, transaction.occurrenceIndex),
         Number(inserted.rows[0].id),
+      );
+      await persistReviewMirrorSnapshot(
+        transactionQuery,
+        Number(inserted.rows[0].id),
+        row.matchedWhooingEntryId,
       );
     }
     return { batchId, rowIds, reviewCount, reused: false };
@@ -502,6 +549,47 @@ async function getExistingBenefitEventId(
   return result.rows[0]?.event_id ?? null;
 }
 
+async function persistReviewMirrorSnapshot(
+  databaseQuery: DatabaseQuery,
+  importRowId: number | null,
+  whooingEntryId: number | null,
+) {
+  if (!importRowId) return;
+  await databaseQuery(
+    `
+    update app.import_rows
+    set review_mirror_section_id = null, review_mirror_entry_id = null,
+        review_mirror_occurred_date = null, review_mirror_l_account = null,
+        review_mirror_l_account_id = null, review_mirror_r_account = null,
+        review_mirror_r_account_id = null, review_mirror_item = null,
+        review_mirror_memo = null, review_mirror_amount = null,
+        updated_at = now()
+    where id = $1
+    `,
+    [importRowId],
+  );
+  if (!whooingEntryId) return;
+  await databaseQuery(
+    `
+    update app.import_rows r
+    set review_mirror_section_id = e.section_id,
+        review_mirror_entry_id = e.entry_id,
+        review_mirror_occurred_date = to_date(floor(e.entry_date)::text, 'YYYYMMDD'),
+        review_mirror_l_account = e.l_account,
+        review_mirror_l_account_id = e.l_account_id,
+        review_mirror_r_account = e.r_account,
+        review_mirror_r_account_id = e.r_account_id,
+        review_mirror_item = e.item,
+        review_mirror_memo = coalesce(e.memo, ''),
+        review_mirror_amount = e.money,
+        updated_at = now()
+    from whooing.entries e
+    where r.id = $1 and e.section_id = $2 and e.entry_id = $3
+    `,
+    [importRowId, sectionId, whooingEntryId],
+  );
+}
+
 export async function createImportReviewBatch(input: {
   filename: string;
   sourceFileHash: string;
@@ -534,8 +622,14 @@ export async function refreshImportReviewBatch(input: {
       throw new Error("import_batch_source_mismatch");
     }
 
+    const maximumRowIndexResult = await transactionQuery<{ maximum_row_index: number }>(
+      "select coalesce(max(row_index), 0)::integer as maximum_row_index from app.import_rows where batch_id = $1",
+      [input.batchId],
+    );
+    const maximumRowIndex = maximumRowIndexResult.rows[0]?.maximum_row_index ?? 0;
+
     for (const row of input.rows) {
-      await transactionQuery(
+      const refreshed = await transactionQuery<{ id: string }>(
         `
         update app.import_rows
         set status = $4, review_reason = $5, matched_whooing_entry_id = $6,
@@ -544,7 +638,8 @@ export async function refreshImportReviewBatch(input: {
         where batch_id = $1
           and source_identity_key = $2
           and occurrence_index = $3
-          and status not in ('created', 'updated', 'skipped', 'reviewed', 'write_failed')
+          and status not in ('created', 'updated', 'deleted', 'skipped', 'reviewed', 'write_failed')
+        returning id::text
         `,
         [
           input.batchId,
@@ -562,6 +657,70 @@ export async function refreshImportReviewBatch(input: {
             : null,
         ],
       );
+      if (refreshed.rows[0]) {
+        await persistReviewMirrorSnapshot(
+          transactionQuery,
+          Number(refreshed.rows[0].id),
+          row.matchedWhooingEntryId,
+        );
+      }
+    }
+
+    for (const [index, row] of input.possibleDeletes.entries()) {
+      const transaction = row.transaction;
+      const persisted = await transactionQuery<{ id: string }>(
+        `
+        insert into app.import_rows (
+          batch_id, row_index, occurrence_index, source_identity_key, source_content_hash,
+          occurred_date, entry_type, source_asset_name, counterparty_asset_name,
+          source_category_name, source_subcategory_name, item, memo, posting_amount,
+          approval_amount, discount_amount, currency, status, review_reason,
+          matched_whooing_entry_id, benefit_status, benefit_reason
+        ) values (
+          $1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13,
+          $14, $15, $16, $17, $18, $19, $20, $21, ''
+        )
+        on conflict (batch_id, source_identity_key, occurrence_index) do update
+        set status = excluded.status,
+            review_reason = excluded.review_reason,
+            matched_whooing_entry_id = excluded.matched_whooing_entry_id,
+            updated_at = now()
+        where import_rows.status not in (
+          'created', 'updated', 'deleted', 'skipped', 'reviewed', 'write_failed'
+        )
+        returning id::text
+        `,
+        [
+          input.batchId,
+          maximumRowIndex + index + 1,
+          transaction.occurrenceIndex,
+          transaction.sourceIdentityKey,
+          transaction.sourceContentHash,
+          transaction.occurredDate,
+          transaction.entryType,
+          transaction.sourceAssetName,
+          transaction.counterpartyAssetName,
+          transaction.sourceCategoryName,
+          transaction.sourceSubcategoryName,
+          transaction.item,
+          transaction.memo,
+          transaction.postingAmount,
+          transaction.approvalAmount,
+          transaction.discountAmount,
+          transaction.currency,
+          row.status,
+          row.reason,
+          row.matchedWhooingEntryId,
+          row.cardBenefitStatus,
+        ],
+      );
+      if (persisted.rows[0]) {
+        await persistReviewMirrorSnapshot(
+          transactionQuery,
+          Number(persisted.rows[0].id),
+          row.matchedWhooingEntryId,
+        );
+      }
     }
 
     const reviewCount = input.rows.filter((row) => !["auto_creatable", "duplicate"].includes(row.status)).length
@@ -916,18 +1075,16 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
            counterparty_mapping.whooing_account_type as counterparty_account_type,
            counterparty_mapping.whooing_account_id as counterparty_account_id,
            r.matched_whooing_entry_id::text,
-           mirror.section_id as mirror_section_id,
-           mirror.entry_id::text as mirror_entry_id,
-           case when mirror.entry_date is null then null else
-             to_char(to_date(floor(mirror.entry_date)::text, 'YYYYMMDD'), 'YYYY-MM-DD')
-           end as mirror_occurred_date,
-           mirror.l_account as mirror_left_account_type,
-           mirror.l_account_id as mirror_left_account_id,
-           mirror.r_account as mirror_right_account_type,
-           mirror.r_account_id as mirror_right_account_id,
-           mirror.item as mirror_item,
-           mirror.memo as mirror_memo,
-           mirror.money::text as mirror_amount
+           r.review_mirror_section_id as mirror_section_id,
+           r.review_mirror_entry_id::text as mirror_entry_id,
+           r.review_mirror_occurred_date::text as mirror_occurred_date,
+           r.review_mirror_l_account as mirror_left_account_type,
+           r.review_mirror_l_account_id as mirror_left_account_id,
+           r.review_mirror_r_account as mirror_right_account_type,
+           r.review_mirror_r_account_id as mirror_right_account_id,
+           r.review_mirror_item as mirror_item,
+           r.review_mirror_memo as mirror_memo,
+           r.review_mirror_amount::text as mirror_amount
     from app.import_rows r
     left join app.import_mappings source_mapping
       on source_mapping.source = 'pyeonhan_excel'
@@ -944,13 +1101,10 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
      and counterparty_mapping.mapping_type = 'asset'
      and counterparty_mapping.source_key = r.counterparty_asset_name
      and counterparty_mapping.is_active
-    left join whooing.entries mirror
-      on mirror.section_id = $2
-     and mirror.entry_id = r.matched_whooing_entry_id
     where r.id = any($1::bigint[])
     order by r.id
     `,
-    [rowIds, sectionId],
+    [rowIds],
   );
   return result.rows.map((row) => ({
     id: Number(row.id),
@@ -1081,7 +1235,7 @@ export async function findExactWhooingAccount(accountType: string, title: string
 
 export async function reserveImportActionOperation(input: {
   rowId: number;
-  operationType: "create" | "update" | "benefit" | "skip" | "review";
+  operationType: "create" | "update" | "delete" | "benefit" | "skip" | "review";
   operationKey: string;
 }) {
   const result = await query(
@@ -1094,7 +1248,7 @@ export async function reserveImportActionOperation(input: {
           status = 'failed'
           or (
             status = 'pending'
-            and operation_type in ('update', 'benefit')
+            and operation_type in ('update', 'delete', 'benefit')
             and updated_at < now() - interval '15 minutes'
           )
         )
@@ -1210,12 +1364,12 @@ export async function finishImportOperationRecord(input: {
 
 export async function finishImportActionOperation(input: {
   rowId: number;
-  operationType: "create" | "update" | "benefit";
+  operationType: "create" | "update" | "delete" | "benefit";
   operationKey: string;
   status: "created" | "failed";
   whooingEntryId: number | null;
   errorMessage: string | null;
-  rowStatus: "created" | "updated" | "write_failed";
+  rowStatus: "created" | "updated" | "deleted" | "write_failed";
 }) {
   await withTransaction(async (transactionQuery) => {
     await transactionQuery(
@@ -1231,13 +1385,32 @@ export async function finishImportActionOperation(input: {
       update app.import_rows
       set status = $2,
           created_whooing_entry_id = case when $2 = 'created' then $3 else created_whooing_entry_id end,
-          matched_whooing_entry_id = case when $2 = 'updated' then $3 else matched_whooing_entry_id end,
+          matched_whooing_entry_id = case
+            when $2 = 'updated' then $3
+            when $2 = 'deleted' then null
+            else matched_whooing_entry_id
+          end,
           review_reason = coalesce($4, review_reason), updated_at = now()
       where id = $1
       `,
       [input.rowId, input.rowStatus, input.whooingEntryId, input.errorMessage],
     );
   });
+}
+
+export async function hasCardBenefitEventForWhooingEntry(entryId: number) {
+  const result = await query<{ exists: boolean }>(
+    `
+    select exists (
+      select 1
+      from app.card_benefit_events
+      where whooing_entry_id = $1
+        and (section_id = $2 or section_id is null)
+    ) as exists
+    `,
+    [entryId, sectionId],
+  );
+  return result.rows[0]?.exists ?? false;
 }
 
 export async function markImportRowsReviewed(input: {
@@ -1249,7 +1422,7 @@ export async function markImportRowsReviewed(input: {
     update app.import_rows
     set status = $2, review_reason = $3, updated_at = now()
     where id = any($1::bigint[])
-      and status not in ('created', 'updated', 'duplicate')
+      and status not in ('created', 'updated', 'deleted', 'duplicate')
     `,
     [input.rowIds, input.action === "skip" ? "skipped" : "reviewed", input.action === "skip" ? "운영자가 건너뛰었습니다." : "운영자가 검토 완료로 표시했습니다."],
   );

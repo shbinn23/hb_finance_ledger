@@ -51,6 +51,18 @@ export function parseImportUpdateRequest(value: unknown): ParseResult<{ importRo
     : { ok: false, error: "invalid_import_row" };
 }
 
+export function parseImportDeleteRequest(value: unknown): ParseResult<{ importRowId: number }> {
+  if (!value || typeof value !== "object") return { ok: false, error: "invalid_request" };
+  const input = value as Record<string, unknown>;
+  if (input.confirmed !== true || input.confirmationText !== "원장 거래 삭제") {
+    return { ok: false, error: "delete_confirmation_required" };
+  }
+  const importRowId = Number(input.importRowId);
+  return Number.isSafeInteger(importRowId) && importRowId > 0
+    ? { ok: true, value: { importRowId } }
+    : { ok: false, error: "invalid_import_row" };
+}
+
 export function parseImportBenefitRequest(value: unknown): ParseResult<{
   importRowId: number;
   ruleId: string;

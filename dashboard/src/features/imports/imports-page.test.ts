@@ -14,7 +14,7 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /삭제 후보/);
   assert.match(source, /충돌/);
   assert.match(source, /신규 확정 거래 자동 등록/);
-  assert.match(source, /수정은 단건 승인하며 삭제 후보는 표시만 합니다/);
+  assert.match(source, /수정과 삭제는 단건 승인/);
   assert.match(source, /window\.confirm/);
   assert.match(source, /migration 미적용 상태/);
   assert.match(source, /새 자산·분류 후보/);
@@ -35,7 +35,7 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /수정 전 → 현재/);
   assert.match(source, /2개 편한가계부 row → 1개 Whooing transfer/);
   assert.match(source, /새 계정 생성 승인/);
-  assert.match(source, /dry-run-only에서는 원장 등록이 비활성화됩니다/);
+  assert.match(source, /dry-run-only에서는 원장 변경이 비활성화됩니다/);
   assert.match(source, /\/api\/imports\/gmail\/poll/);
   assert.match(source, /Gmail은 읽기 전용입니다/);
   assert.match(source, /dry-run only/);
@@ -48,9 +48,15 @@ test("imports page exposes review-first Excel dry-run and guarded automatic crea
   assert.match(source, /현재 추가로 승인할 카드혜택 후보는 없습니다/);
   assert.match(source, /감지된 할인 거래는 모두 기존 event와 정상 연결되어 있습니다/);
   assert.match(source, /신규 할인 후보가 생기면 rule_matched 상태로 표시됩니다/);
-  assert.match(source, /삭제·충돌·환급·캐시백·민생지원쿠폰은 review-only/);
+  assert.match(source, /충돌·환급·캐시백·민생지원쿠폰은 review-only/);
   assert.match(source, /\/api\/imports\/actions\/register/);
   assert.match(source, /\/api\/imports\/actions\/approve-update/);
+  assert.match(source, /\/api\/imports\/actions\/approve-delete/);
+  assert.match(source, /삭제 승인/);
+  assert.match(source, /window\.prompt/);
+  assert.match(source, /confirmationText !== "원장 거래 삭제"/);
+  assert.match(source, /원장 거래 삭제/);
+  assert.match(source, /검토 대기/);
   assert.match(source, /\/api\/imports\/actions\/review/);
   assert.match(source, /\/api\/imports\/actions\/history/);
   assert.match(source, /Whooing 원장에 실제 등록/);

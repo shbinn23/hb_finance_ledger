@@ -51,17 +51,17 @@ export interface ImportActionDependencies {
   getOperation: (operationKey: string) => Promise<ImportActionOperation | null>;
   reserveOperation: (input: {
     rowId: number;
-    operationType: "create" | "update" | "skip" | "review";
+    operationType: "create" | "update" | "delete" | "skip" | "review";
     operationKey: string;
   }) => Promise<boolean>;
   finishOperation: (input: {
     rowId: number;
-    operationType: "create" | "update";
+    operationType: "create" | "update" | "delete";
     operationKey: string;
     status: "created" | "failed";
     whooingEntryId: number | null;
     errorMessage: string | null;
-    rowStatus: "created" | "updated" | "write_failed";
+    rowStatus: "created" | "updated" | "deleted" | "write_failed";
   }) => Promise<void>;
   finishOperationRecord: (input: {
     operationKey: string;
@@ -202,7 +202,7 @@ export async function executeImportReviewAction(input: {
 }) {
   const rows = await input.dependencies.getRows(input.rowIds);
   const eligibleRows = rows
-    .filter((row) => !["created", "updated", "duplicate"].includes(row.status))
+    .filter((row) => !["created", "updated", "deleted", "duplicate"].includes(row.status));
   const reservedRows: Array<{ id: number; operationKey: string }> = [];
   for (const row of eligibleRows) {
     const operationKey = `pyeonhan-${input.action}:${row.id}`;
@@ -237,6 +237,13 @@ export interface ImportUpdateDependencies extends ImportActionDependencies {
     status: string;
     eventId?: string | null;
   }>;
+}
+
+export interface ImportDeleteDependencies extends ImportActionDependencies {
+  getCurrentEntry: (entryId: number, sectionId: string) => Promise<NonNullable<ImportActionRow["mirrorEntry"]> | null>;
+  deleteEntry: (entryId: number, sectionId: string) => Promise<unknown>;
+  syncForDate: (occurredDate: string) => Promise<unknown>;
+  hasBenefitEvent: (entryId: number) => Promise<boolean>;
 }
 
 function sameMirrorSnapshot(
@@ -283,6 +290,18 @@ function previousUpdateOperationKey(row: Pick<ImportActionRow, "sourceIdentityKe
     .update(`${row.sourceIdentityKey}:${row.sourceContentHash}`)
     .digest("hex");
   return `pyeonhan-update:${digest}`;
+}
+
+function deleteOperationKey(row: Pick<ImportActionRow, "sourceIdentityKey" | "sourceContentHash" | "matchedWhooingEntryId">) {
+  const digest = createHash("sha256")
+    .update(`${row.sourceIdentityKey}:${row.sourceContentHash}:${row.matchedWhooingEntryId ?? "unmatched"}`)
+    .digest("hex");
+  return `pyeonhan-delete:${digest}`;
+}
+
+function isNotFoundError(error: unknown) {
+  return typeof error === "object" && error !== null
+    && "status" in error && (error as { status?: unknown }).status === 404;
 }
 
 async function applyUpdatedBenefit(
@@ -462,5 +481,128 @@ export async function executeApprovedImportUpdate(input: {
     message: syncStatus === "pending"
       ? "Whooing 수정은 완료됐지만 대시보드 반영은 지연될 수 있습니다."
       : "Whooing 거래 수정과 대시보드 동기화를 완료했습니다.",
+  };
+}
+
+export async function executeApprovedImportDelete(input: {
+  rowId: number;
+  dependencies: ImportDeleteDependencies;
+}) {
+  const row = (await input.dependencies.getRows([input.rowId]))[0];
+  if (!row || !row.matchedWhooingEntryId || !row.mirrorEntry) {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "승인 가능한 삭제 후보가 아닙니다." };
+  }
+  const operationKey = deleteOperationKey(row);
+  const existing = await input.dependencies.getOperation(operationKey);
+  if (existing?.status === "created") {
+    return {
+      ok: true,
+      status: "reused" as const,
+      syncStatus: "skipped" as const,
+      entryId: existing.whooingEntryId,
+      operationKey,
+      message: "이미 삭제된 거래입니다.",
+    };
+  }
+  const retryableFailure = row.status === "write_failed"
+    && (existing?.status === "pending" || existing?.status === "failed")
+    && existing.whooingEntryId === row.matchedWhooingEntryId;
+  if (row.status !== "possible_delete" && !retryableFailure) {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "승인 가능한 삭제 후보가 아닙니다." };
+  }
+  if (await input.dependencies.hasBenefitEvent(row.matchedWhooingEntryId)) {
+    return {
+      ok: false,
+      status: "rejected" as const,
+      syncStatus: "skipped" as const,
+      message: "연결된 카드혜택 event가 있어 원장만 삭제할 수 없습니다. 카드혜택 정합성을 먼저 확인해 주세요.",
+    };
+  }
+  let currentEntry: NonNullable<ImportActionRow["mirrorEntry"]> | null = null;
+  let remoteAlreadyDeleted = false;
+  try {
+    currentEntry = await input.dependencies.getCurrentEntry(
+      row.matchedWhooingEntryId,
+      row.mirrorEntry.sectionId,
+    );
+  } catch (error) {
+    remoteAlreadyDeleted = Boolean(
+      existing
+      && (existing.status === "pending" || existing.status === "failed")
+      && existing.whooingEntryId === row.matchedWhooingEntryId
+      && isNotFoundError(error),
+    );
+    if (!remoteAlreadyDeleted) {
+      return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "Whooing 원본 거래의 최신 상태를 확인할 수 없습니다." };
+    }
+  }
+  if (!remoteAlreadyDeleted && (!currentEntry || !sameMirrorSnapshot(row.mirrorEntry, currentEntry))) {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "Whooing 원본 거래가 import 검토 이후 변경되어 삭제를 중단했습니다." };
+  }
+  const reserved = await input.dependencies.reserveOperation({
+    rowId: row.id,
+    operationType: "delete",
+    operationKey,
+  });
+  if (!reserved) {
+    return { ok: false, status: "rejected" as const, syncStatus: "skipped" as const, message: "동일 삭제가 처리 중입니다." };
+  }
+  if (!remoteAlreadyDeleted && await input.dependencies.hasBenefitEvent(row.matchedWhooingEntryId)) {
+    await input.dependencies.finishOperation({
+      rowId: row.id,
+      operationType: "delete",
+      operationKey,
+      status: "failed",
+      whooingEntryId: row.matchedWhooingEntryId,
+      errorMessage: "연결된 카드혜택 event가 삭제 승인 중 생성됨",
+      rowStatus: "write_failed",
+    });
+    return {
+      ok: false,
+      status: "rejected" as const,
+      syncStatus: "skipped" as const,
+      message: "연결된 카드혜택 event가 있어 삭제를 중단했습니다.",
+    };
+  }
+  try {
+    if (!remoteAlreadyDeleted) {
+      await input.dependencies.deleteEntry(row.matchedWhooingEntryId, row.mirrorEntry.sectionId);
+    }
+  } catch {
+    await input.dependencies.finishOperation({
+      rowId: row.id,
+      operationType: "delete",
+      operationKey,
+      status: "failed",
+      whooingEntryId: row.matchedWhooingEntryId,
+      errorMessage: "Whooing 거래 삭제 실패",
+      rowStatus: "write_failed",
+    });
+    return { ok: false, status: "failed" as const, syncStatus: "skipped" as const, message: "Whooing 거래 삭제에 실패했습니다." };
+  }
+  let syncStatus: "synced" | "pending" = "synced";
+  try {
+    await input.dependencies.syncForDate(row.mirrorEntry.occurredDate);
+  } catch {
+    syncStatus = "pending";
+  }
+  await input.dependencies.finishOperation({
+    rowId: row.id,
+    operationType: "delete",
+    operationKey,
+    status: "created",
+    whooingEntryId: row.matchedWhooingEntryId,
+    errorMessage: syncStatus === "pending" ? "Whooing 삭제 완료, local sync pending" : null,
+    rowStatus: "deleted",
+  });
+  return {
+    ok: true,
+    status: "deleted" as const,
+    syncStatus,
+    entryId: row.matchedWhooingEntryId,
+    operationKey,
+    message: syncStatus === "pending"
+      ? "Whooing 거래는 삭제됐지만 대시보드 반영은 지연될 수 있습니다."
+      : "Whooing 거래 삭제와 대시보드 동기화를 완료했습니다.",
   };
 }

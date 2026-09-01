@@ -1,6 +1,7 @@
 import { createRuntimeDashboardLedgerEntry } from "../ledger/ledger-entry-runtime";
 import {
   executeApprovedImportCreates,
+  executeApprovedImportDelete,
   executeApprovedImportUpdate,
   executeImportReviewAction,
 } from "./import-action-service";
@@ -9,11 +10,12 @@ import {
   finishImportOperationRecord,
   getImportActionOperation,
   getImportActionRows,
+  hasCardBenefitEventForWhooingEntry,
   markImportRowsReviewed,
   reserveImportActionOperation,
 } from "./import-repository";
 import { syncWhooingEntriesForDate } from "../whooing/sync-client";
-import { getWhooingEntry, updateWhooingEntry } from "../whooing/write-client";
+import { deleteWhooingEntry, getWhooingEntry, updateWhooingEntry } from "../whooing/write-client";
 import { executeRuntimePyeonhanBenefitCandidate } from "./pyeonhan-benefit-runtime";
 
 const dependencies = {
@@ -46,6 +48,19 @@ export function executeRuntimeApprovedImportUpdate(rowId: number) {
       updateEntry: updateWhooingEntry,
       syncForDate: syncWhooingEntriesForDate,
       approveBenefit: executeRuntimePyeonhanBenefitCandidate,
+    },
+  });
+}
+
+export function executeRuntimeApprovedImportDelete(rowId: number) {
+  return executeApprovedImportDelete({
+    rowId,
+    dependencies: {
+      ...dependencies,
+      getCurrentEntry: getWhooingEntry,
+      deleteEntry: deleteWhooingEntry,
+      syncForDate: syncWhooingEntriesForDate,
+      hasBenefitEvent: hasCardBenefitEventForWhooingEntry,
     },
   });
 }

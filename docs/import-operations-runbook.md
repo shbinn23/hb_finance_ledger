@@ -142,7 +142,7 @@ updated, skipped, reviewed, and failed rows retain their audit state and operati
 
 ## Safe automatic operation
 
-Use these flags only after migrations through `009_add_import_account_create_operations.sql`, a fresh
+Use these flags only after migrations through `010_add_import_delete_operations.sql`, a fresh
 database backup, healthy ETL, and a successful dry-run review:
 
 ```text
@@ -165,7 +165,7 @@ Automatically allowed:
 
 Never automatic:
 
-- `possible_update` (single-row approval only), `possible_delete`, conflicts, incomplete mappings;
+- `possible_update` and `possible_delete` (single-row approval only), conflicts, incomplete mappings;
 - refunds, cashback, 민생지원쿠폰/difference income, or uncertain card-benefit rules;
 - new account creation. `/imports` shows a candidate, but the operator must confirm type, section, and name.
 
@@ -253,15 +253,19 @@ This section supersedes the dry-run-only runtime state recorded in the supervise
   source identity, content hash, and the target Whooing entry; the benefit key includes source identity
   and occurrence. Legacy update keys remain readable only for completed operations tied to the same
   entry, and repeated approval returns the existing result without another PUT or event insert.
-- `conflict`, `possible_delete`, `mapping_required`, refund/cashback, support-coupon, and uncertain-rule
-  rows remain review-only and must not enter automatic update execution.
+- `conflict`, `mapping_required`, refund/cashback, support-coupon, and uncertain-rule rows remain
+  review-only and must not enter automatic update execution.
+- A delete approval re-reads and exactly compares the Whooing entry before calling
+  `DELETE entries/:entry_id/:section_id.json`. It is blocked when a linked card-benefit event exists,
+  and it never runs from Gmail automation.
 
 ## Review-only policies
 
 - Refund/cashback rows can mean income, expense reversal, or card benefit. They are never automatic.
 - 민생지원쿠폰 difference adjustments remain review-only until a balance-adjustment or support-income
   policy is explicitly chosen.
-- Update candidates require a separate single-row confirmation. Delete candidates remain review-only.
+- Update and delete candidates require separate single-row confirmation. Deletion additionally requires
+  the explicit `원장 거래 삭제` confirmation and current-source equality.
 
 ## Practical monthly snapshot validation
 
@@ -288,8 +292,9 @@ export as a new Gmail attachment, then run `Gmail dry-run 확인` once.
   deterministic `pyeonhan:<source_identity_key>` operation key protects retries. With
   `GMAIL_IMPORT_DRY_RUN_ONLY=true`, both the UI and server reject the Whooing create action.
 
-Automatic deletion is prohibited. A missing prior row is shown as `possible_delete` for review only.
-Refund, cashback, support coupon, uncertain card benefit, and delete rows never enter automatic creation.
+Automatic deletion is prohibited. A missing prior row is shown as `possible_delete`; only an explicit
+single-row approval can delete the matching Whooing entry. Refund, cashback, support coupon, uncertain
+card benefit, and delete rows never enter automatic creation.
 
 Before disabling dry-run-only, verify ETL is online, the mirror is fresh, mappings are correct, every
 candidate payload is reviewed, and the latest export produces no unexplained conflict. Enable at most one
@@ -302,7 +307,7 @@ explicitly approved write and verify its operation key and mirror result before 
 - 신한 레이디 lunch rows must satisfy approval minus floor(5%) equals posting.
 - MG+S simple-pay rows use the configured rule rate; MG+S subscription rows use their separate 50% rule.
 - `auto_creatable` remains disabled operationally while Gmail is dry-run-only.
-- Refund/cashback, 민생지원쿠폰 differences, and deletes remain review-only.
+- Refund/cashback and 민생지원쿠폰 differences remain review-only. Deletes remain manual-only.
 
 ## Supervised approval rollout
 

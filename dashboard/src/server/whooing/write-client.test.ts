@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWhooingAccount, extractWhooingAccountId, getWhooingEntry, updateWhooingEntry } from "./write-client.ts";
+import { createWhooingAccount, deleteWhooingEntry, extractWhooingAccountId, getWhooingEntry, updateWhooingEntry } from "./write-client.ts";
 
 const payload = {
   section_id: "s1",
@@ -52,6 +52,32 @@ test("Whooing update uses authenticated PUT for one positive entry id", async ()
 
 test("Whooing update rejects invalid entry ids before fetch", async () => {
   await assert.rejects(() => updateWhooingEntry(0, payload), /Invalid Whooing entry id/);
+});
+
+test("Whooing delete uses the documented entry and section path", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = ["WHOOING_APP_ID", "WHOOING_TOKEN", "WHOOING_SIGNATURE"]
+    .map((key) => [key, process.env[key]] as const);
+  process.env.WHOOING_APP_ID = "test-app";
+  process.env.WHOOING_TOKEN = "test-token";
+  process.env.WHOOING_SIGNATURE = "test-signature";
+  let request: { url: string; method: string } | null = null;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), method: String(init?.method) };
+    return new Response(JSON.stringify({ code: 200, results: {} }), { status: 200 });
+  };
+  try {
+    await deleteWhooingEntry(42, "s1");
+    assert.deepEqual(request, {
+      url: "https://whooing.com/api/entries/42/s1.json",
+      method: "DELETE",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of originalEnv) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
 });
 
 test("Whooing entry read returns the current immutable comparison snapshot", async () => {

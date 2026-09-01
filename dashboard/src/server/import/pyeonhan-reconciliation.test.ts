@@ -501,6 +501,7 @@ test("reconciliation reports previous snapshot identities missing from the curre
   const previousRows: PreviousImportRow[] = [{
     sourceIdentityKey: "missing-identity",
     sourceContentHash: "old-content",
+    occurrenceIndex: 3,
     status: "created",
     matchedWhooingEntryId: 1428001,
   }];
@@ -510,6 +511,47 @@ test("reconciliation reports previous snapshot identities missing from the curre
 
   assert.equal(result.possibleDeletes.length, 1);
   assert.equal(result.possibleDeletes[0].status, "possible_delete");
+  assert.equal(result.possibleDeletes[0].transaction.occurredDate, "");
+  assert.equal(result.possibleDeletes[0].transaction.occurrenceIndex, 3);
+});
+
+test("reconciliation detects a payment-account-only revision as one update", () => {
+  const previousRows: PreviousImportRow[] = [{
+    sourceIdentityKey: "old-card-identity",
+    sourceContentHash: "old-card-content",
+    status: "created",
+    matchedWhooingEntryId: 1429000,
+    occurredDate: "2026-08-25",
+    entryType: "expense",
+    sourceAssetName: "국민 톡톡",
+    sourceCategoryName: "선택",
+    sourceSubcategoryName: "식비",
+    item: "점심",
+    memo: "",
+    postingAmount: 9000,
+    approvalAmount: 9000,
+  }];
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      occurredDate: "2026-08-25",
+      sourceAssetName: "우체국",
+      item: "점심",
+      sourceIdentityKey: "new-card-identity",
+      sourceContentHash: "new-card-content",
+    })],
+    mappings,
+    mirrorEntries: [mirror({
+      entryId: 1429000,
+      occurredDate: "2026-08-25",
+    })],
+    previousRows,
+  });
+
+  assert.equal(result.rows[0].status, "possible_update");
+  assert.equal(result.rows[0].matchedWhooingEntryId, 1429000);
+  assert.deepEqual(result.rows[0].changes.map((change) => change.field), ["sourceAssetName"]);
+  assert.deepEqual(result.rows[0].mirrorChanges.map((change) => change.field), ["rightAccount"]);
+  assert.equal(result.possibleDeletes.length, 0);
 });
 
 test("reconciliation keeps discounts without an explicit rule and difference income in review", () => {
