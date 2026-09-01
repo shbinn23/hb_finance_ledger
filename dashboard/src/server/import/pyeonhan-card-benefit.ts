@@ -1,4 +1,5 @@
 import type { NormalizedPyeonhanTransaction } from "./pyeonhan-types.ts";
+import type { CardBenefitRule } from "../../lib/card-benefits/types.ts";
 
 export interface PyeonhanCardBenefitCandidate {
   ruleId: string;
@@ -7,6 +8,24 @@ export interface PyeonhanCardBenefitCandidate {
   discountRateBps: number;
   performanceAmount: number;
   confidence: number;
+  matchKind?: "exact" | "cap_limited";
+}
+
+export type ImportBenefitResolutionStatus =
+  | "not_applicable"
+  | "rule_matched"
+  | "rule_selection_required"
+  | "rule_unknown";
+
+export interface ImportMappedCard {
+  accountType: string;
+  accountId: string;
+}
+
+export interface PyeonhanCardBenefitResolution {
+  status: ImportBenefitResolutionStatus;
+  selectedRuleId: string | null;
+  candidates: PyeonhanCardBenefitCandidate[];
 }
 
 function compact(value: string | null | undefined) {
@@ -15,6 +34,67 @@ function compact(value: string | null | undefined) {
 
 function exactRateDiscount(transaction: NormalizedPyeonhanTransaction, basisPoints: number) {
   return Math.floor(transaction.approvalAmount * basisPoints / 10_000) === transaction.discountAmount;
+}
+
+function candidateFromRule(
+  transaction: NormalizedPyeonhanTransaction,
+  rule: CardBenefitRule,
+  matchKind: "exact" | "cap_limited",
+): PyeonhanCardBenefitCandidate {
+  return {
+    ruleId: rule.ruleId,
+    label: rule.name,
+    reason: matchKind === "exact"
+      ? `카드와 실제 할인액이 ${rule.discountRateBps / 100}% rule에 일치합니다.`
+      : `기록된 할인액이 ${rule.discountRateBps / 100}% 이론 할인보다 작아 한도 소진 후보입니다.`,
+    discountRateBps: rule.discountRateBps,
+    performanceAmount: transaction.approvalAmount,
+    confidence: matchKind === "exact" ? 1 : 0.7,
+    matchKind,
+  };
+}
+
+export function resolvePyeonhanCardBenefitCandidates(
+  transaction: NormalizedPyeonhanTransaction,
+  mappedCard: ImportMappedCard | null,
+  rules: CardBenefitRule[],
+): PyeonhanCardBenefitResolution {
+  if (
+    transaction.entryType !== "expense"
+    || transaction.approvalAmount <= transaction.postingAmount
+    || transaction.discountAmount !== transaction.approvalAmount - transaction.postingAmount
+  ) {
+    return { status: "not_applicable", selectedRuleId: null, candidates: [] };
+  }
+  if (!mappedCard || mappedCard.accountType !== "liabilities") {
+    return { status: "rule_unknown", selectedRuleId: null, candidates: [] };
+  }
+
+  const eligibleRules = rules.filter((rule) => (
+    rule.status === "active"
+    && rule.cardAccountType === mappedCard.accountType
+    && rule.cardAccountId === mappedCard.accountId
+    && (rule.minApprovalAmount === null || transaction.approvalAmount >= rule.minApprovalAmount)
+  )).sort((left, right) => left.priority - right.priority || left.ruleId.localeCompare(right.ruleId));
+  const exact = eligibleRules
+    .filter((rule) => exactRateDiscount(transaction, rule.discountRateBps))
+    .map((rule) => candidateFromRule(transaction, rule, "exact"));
+  if (exact.length === 1) {
+    return { status: "rule_matched", selectedRuleId: exact[0].ruleId, candidates: exact };
+  }
+  if (exact.length > 1) {
+    return { status: "rule_selection_required", selectedRuleId: null, candidates: exact };
+  }
+
+  const capLimited = eligibleRules.filter((rule) => {
+    const theoretical = Math.floor(transaction.approvalAmount * rule.discountRateBps / 10_000);
+    return rule.monthlyCapTiers.length > 0
+      && transaction.discountAmount > 0
+      && transaction.discountAmount < theoretical;
+  }).map((rule) => candidateFromRule(transaction, rule, "cap_limited"));
+  return capLimited.length > 0
+    ? { status: "rule_selection_required", selectedRuleId: null, candidates: capLimited }
+    : { status: "rule_unknown", selectedRuleId: null, candidates: [] };
 }
 
 export function identifyPyeonhanCardBenefitCandidate(
