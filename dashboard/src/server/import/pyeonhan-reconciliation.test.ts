@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { NormalizedPyeonhanTransaction } from "./pyeonhan-types.ts";
+import type { CardBenefitRule } from "../../lib/card-benefits/types.ts";
 import {
   reconcilePyeonhanTransactions,
   type ImportMapping,
@@ -40,6 +41,21 @@ const mappings: ImportMapping[] = [
   { mappingType: "income_category", sourceKey: "근로소득", accountType: "income", accountId: "i1", confidence: 1 },
 ];
 
+const mgsRules: CardBenefitRule[] = [{
+  ruleId: "hana_mgs_simple_pay_10p",
+  cardAccountType: "liabilities",
+  cardAccountId: "x45",
+  name: "하나 MG+S 간편결제 10%",
+  status: "active",
+  priority: 10,
+  paymentChannel: "simple_pay",
+  minApprovalAmount: 10000,
+  discountType: "rate",
+  discountRateBps: 1000,
+  monthlyCapTiers: [],
+  postingPolicy: "reduce_expense",
+}];
+
 function mirror(overrides: Partial<MirrorEntry> = {}): MirrorEntry {
   return {
     entryId: 1428000,
@@ -62,6 +78,55 @@ test("reconciliation marks a fully mapped unmatched expense auto-creatable", () 
 
   assert.equal(result.rows[0].status, "auto_creatable");
   assert.equal(result.summary.autoCreatable, 1);
+});
+
+test("reconciliation keeps a discounted row ledger-creatable and resolves its unique DB rule", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      sourceAssetName: "하나 MG+S",
+      sourceCategoryName: "필수",
+      sourceSubcategoryName: "생필품",
+      item: "쿠팡",
+      approvalAmount: 25250,
+      postingAmount: 22725,
+      discountAmount: 2525,
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "하나 MG+S", accountType: "liabilities", accountId: "x45", confidence: 1 },
+      { mappingType: "expense_category", sourceKey: "필수 / 생필품", accountType: "expenses", accountId: "e2", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows: [],
+    cardBenefitRules: mgsRules,
+  });
+
+  assert.equal(result.rows[0].status, "auto_creatable");
+  assert.equal(result.rows[0].cardBenefitStatus, "rule_matched");
+  assert.equal(result.rows[0].cardBenefitCandidate?.ruleId, "hana_mgs_simple_pay_10p");
+  assert.equal(result.rows[0].cardBenefitCandidates.length, 1);
+});
+
+test("reconciliation keeps the ledger creatable when no benefit rule matches", () => {
+  const result = reconcilePyeonhanTransactions({
+    transactions: [transaction({
+      sourceAssetName: "하나 MG+S",
+      approvalAmount: 10000,
+      postingAmount: 9300,
+      discountAmount: 700,
+    })],
+    mappings: [
+      ...mappings,
+      { mappingType: "asset", sourceKey: "하나 MG+S", accountType: "liabilities", accountId: "x45", confidence: 1 },
+    ],
+    mirrorEntries: [],
+    previousRows: [],
+    cardBenefitRules: mgsRules,
+  });
+
+  assert.equal(result.rows[0].status, "auto_creatable");
+  assert.equal(result.rows[0].cardBenefitStatus, "rule_unknown");
+  assert.equal(result.rows[0].cardBenefitCandidate, null);
 });
 
 test("reconciliation requires mapping when an account or category is missing", () => {
@@ -554,7 +619,7 @@ test("reconciliation detects a payment-account-only revision as one update", () 
   assert.equal(result.possibleDeletes.length, 0);
 });
 
-test("reconciliation keeps discounts without an explicit rule and difference income in review", () => {
+test("reconciliation keeps an unresolved discount ledger-creatable but difference income in review", () => {
   const result = reconcilePyeonhanTransactions({
     transactions: [
       transaction({ approvalAmount: 10000, postingAmount: 9000, discountAmount: 1000 }),
@@ -569,14 +634,14 @@ test("reconciliation keeps discounts without an explicit rule and difference inc
     previousRows: [],
   });
 
-  assert.equal(result.rows[0].status, "review_required");
-  assert.match(result.rows[0].reason, /할인 rule/);
+  assert.equal(result.rows[0].status, "auto_creatable");
+  assert.match(result.rows[0].reason, /활성 rule|혜택만 검토/);
   assert.equal(result.rows[0].cardBenefitCandidate, null);
   assert.equal(result.rows[1].status, "review_required");
   assert.match(result.rows[1].reason, /지원금\/쿠폰 처리 정책 필요/);
 });
 
-test("reconciliation exposes an exact card rule candidate but keeps it review-only", () => {
+test("reconciliation exposes an exact card rule candidate without blocking ledger creation", () => {
   const result = reconcilePyeonhanTransactions({
     transactions: [transaction({
       sourceAssetName: "신한 레이디",
@@ -596,10 +661,10 @@ test("reconciliation exposes an exact card rule candidate but keeps it review-on
     previousRows: [],
   });
 
-  assert.equal(result.rows[0].status, "review_required");
+  assert.equal(result.rows[0].status, "auto_creatable");
   assert.equal(result.rows[0].cardBenefitCandidate?.ruleId, "shinhan_lady_lunch_5p");
-  assert.equal(result.rows[0].cardBenefitStatus, "needs_review");
-  assert.match(result.rows[0].reason, /신한 레이디 · 점심 5% 후보/);
+  assert.equal(result.rows[0].cardBenefitStatus, "rule_matched");
+  assert.match(result.rows[0].reason, /신한 레이디 · 점심 5% rule/);
 });
 
 test("reconciliation distinguishes matched, uncertain, and existing benefit events", () => {

@@ -1,6 +1,8 @@
 import type { NormalizedPyeonhanTransaction, PyeonhanEntryType } from "./pyeonhan-types.ts";
+import type { CardBenefitRule } from "../../lib/card-benefits/types.ts";
 import {
   identifyPyeonhanCardBenefitCandidate,
+  resolvePyeonhanCardBenefitCandidates,
   type PyeonhanCardBenefitCandidate,
 } from "./pyeonhan-card-benefit.ts";
 
@@ -17,6 +19,8 @@ export type ImportBenefitStatus =
   | "not_applicable"
   | "rule_matched"
   | "rule_uncertain"
+  | "rule_selection_required"
+  | "rule_unknown"
   | "event_exists"
   | "needs_review"
   | "approved"
@@ -89,6 +93,7 @@ export interface ReconciledImportRow {
   matchedWhooingEntryId: number | null;
   mapping: ResolvedImportMapping;
   cardBenefitCandidate: PyeonhanCardBenefitCandidate | null;
+  cardBenefitCandidates: PyeonhanCardBenefitCandidate[];
   cardBenefitStatus: ImportBenefitStatus;
   benefitEventIntegrity: "not_applicable" | "missing" | "matched" | "amount_mismatch";
   changes: ImportRowChange[];
@@ -419,6 +424,7 @@ function deleteCandidate(previous: PreviousImportRow): ReconciledImportRow {
     matchedWhooingEntryId: previous.matchedWhooingEntryId,
     mapping: emptyMapping(),
     cardBenefitCandidate: null,
+    cardBenefitCandidates: [],
     cardBenefitStatus: "not_applicable",
     benefitEventIntegrity: "not_applicable",
     changes: [],
@@ -431,11 +437,13 @@ export function reconcilePyeonhanTransactions({
   mappings,
   mirrorEntries,
   previousRows,
+  cardBenefitRules,
 }: {
   transactions: NormalizedPyeonhanTransaction[];
   mappings: ImportMapping[];
   mirrorEntries: MirrorEntry[];
   previousRows: PreviousImportRow[];
+  cardBenefitRules?: CardBenefitRule[];
 }): PyeonhanReconciliationResult {
   const usedMirrorIds = new Set<number>();
   const previousByIdentity = new Map(previousRows.map((row) => [row.sourceIdentityKey, row]));
@@ -458,7 +466,27 @@ export function reconcilePyeonhanTransactions({
   const claimedPreviousIdentities = new Set<string>();
   const rows = transactions.map((transaction): ReconciledImportRow => {
     const mapping = resolveMapping(transaction, mappings);
-    const cardBenefitCandidate = identifyPyeonhanCardBenefitCandidate(transaction);
+    const legacyCandidate = cardBenefitRules === undefined
+      ? identifyPyeonhanCardBenefitCandidate(transaction)
+      : null;
+    const resolution = cardBenefitRules === undefined
+      ? {
+        status: transaction.discountAmount > 0
+          ? legacyCandidate ? "rule_matched" as const : "rule_uncertain" as const
+          : "not_applicable" as const,
+        selectedRuleId: legacyCandidate?.ruleId ?? null,
+        candidates: legacyCandidate ? [legacyCandidate] : [],
+      }
+      : resolvePyeonhanCardBenefitCandidates(
+        transaction,
+        mapping.sourceAccount
+          ? { accountType: mapping.sourceAccount.accountType, accountId: mapping.sourceAccount.accountId }
+          : null,
+        cardBenefitRules,
+      );
+    const cardBenefitCandidate = resolution.selectedRuleId
+      ? resolution.candidates.find((candidate) => candidate.ruleId === resolution.selectedRuleId) ?? null
+      : null;
     const base: ReconciledImportRow = {
       transaction,
       status: "review_required",
@@ -466,9 +494,8 @@ export function reconcilePyeonhanTransactions({
       matchedWhooingEntryId: null,
       mapping,
       cardBenefitCandidate,
-      cardBenefitStatus: transaction.discountAmount > 0
-        ? cardBenefitCandidate ? "needs_review" : "rule_uncertain"
-        : "not_applicable",
+      cardBenefitCandidates: resolution.candidates,
+      cardBenefitStatus: resolution.status,
       benefitEventIntegrity: "not_applicable",
       changes: [],
       mirrorChanges: [],
@@ -566,20 +593,19 @@ export function reconcilePyeonhanTransactions({
       );
       return {
         ...base,
+        status: similarMirror ? base.status : "auto_creatable",
         cardBenefitStatus: eventIntegrity === "matched"
           ? "event_exists"
           : eventIntegrity === "amount_mismatch"
             ? "needs_review"
-          : cardBenefitCandidate && similarMirror
-            ? "rule_matched"
-            : cardBenefitCandidate
-              ? "needs_review"
-              : "rule_uncertain",
+            : resolution.status,
         reason: eventIntegrity === "amount_mismatch"
           ? "기존 카드혜택 event의 승인·매입·할인 금액이 import와 일치하지 않습니다."
-          : cardBenefitCandidate
-            ? `카드혜택 ${cardBenefitCandidate.label} 후보입니다. 자동 등록 전 확인이 필요합니다.`
-          : "할인 rule을 확정할 수 없어 자동 등록하지 않습니다.",
+          : resolution.status === "rule_matched" && cardBenefitCandidate
+            ? `카드혜택 ${cardBenefitCandidate.label} rule이 금액 기준으로 일치합니다.`
+            : resolution.status === "rule_selection_required"
+              ? "할인은 확인됐지만 가능한 rule이 여러 개여서 선택이 필요합니다."
+              : "할인은 확인됐지만 일치하는 활성 rule이 없어 혜택만 검토합니다.",
         matchedWhooingEntryId: similarMirror?.entryId ?? null,
         benefitEventIntegrity: eventIntegrity,
         mirrorChanges: mirrorChanges(base, similarMirror),
@@ -651,7 +677,12 @@ export function reconcilePyeonhanTransactions({
       possibleDeletes: possibleDeletes.length,
       conflicts: count("conflict"),
       benefitCandidates: rows.filter((row) => row.cardBenefitStatus === "rule_matched").length,
-      benefitUncertain: rows.filter((row) => row.cardBenefitStatus === "rule_uncertain" || row.cardBenefitStatus === "needs_review").length,
+      benefitUncertain: rows.filter((row) => (
+        row.cardBenefitStatus === "rule_uncertain"
+        || row.cardBenefitStatus === "rule_selection_required"
+        || row.cardBenefitStatus === "rule_unknown"
+        || row.cardBenefitStatus === "needs_review"
+      )).length,
       benefitExisting: rows.filter((row) => row.cardBenefitStatus === "event_exists").length,
       benefitEventMissing: rows.filter((row) => row.benefitEventIntegrity === "missing").length,
       benefitAmountMismatches: rows.filter((row) => row.benefitEventIntegrity === "amount_mismatch").length,

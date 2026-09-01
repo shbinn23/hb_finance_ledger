@@ -9,6 +9,7 @@ import {
   getPreviousImportRowsForRange,
 } from "./import-repository.ts";
 import { reconcilePyeonhanTransactions } from "./pyeonhan-reconciliation.ts";
+import { getActiveCardBenefitRules } from "../card-benefits/repository.ts";
 
 export const MAX_PYEONHAN_UPLOAD_BYTES = 5 * 1024 * 1024;
 
@@ -26,17 +27,19 @@ export async function buildPyeonhanDryRun(file: File) {
   if (dates.length === 0) throw new Error("Excel에 거래가 없습니다.");
   const startDate = dates[0];
   const endDate = dates.at(-1) ?? startDate;
-  const [mappings, mirrorEntries, previousRows, schema] = await Promise.all([
+  const [mappings, mirrorEntries, previousRows, schema, cardBenefitRules] = await Promise.all([
     getImportMappings(),
     getMirrorEntriesForRange(startDate, endDate),
     getPreviousImportRowsForRange(startDate, endDate),
     getImportSchemaStatus(),
+    getActiveCardBenefitRules(),
   ]);
   const reconciliation = reconcilePyeonhanTransactions({
     transactions: parsed.transactions,
     mappings,
     mirrorEntries,
     previousRows,
+    cardBenefitRules,
   });
   return {
     filename: file.name,
