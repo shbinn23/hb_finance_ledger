@@ -64,6 +64,29 @@ test("transfer count includes only successfully created transfer rows", async ()
   assert.deepEqual(result.completedCreateRowIds, [11]);
 });
 
+test("benefit automation waits for a successful ledger create and ignores failed rows", async () => {
+  const benefits: number[] = [];
+  const result = await executeSafeImportAutomation({
+    enabled: true,
+    rows: [
+      { importRowId: 30, status: "auto_creatable", transaction: { entryType: "expense" }, cardBenefitStatus: "rule_matched", cardBenefitCandidate: { ruleId: "rule-1" } },
+      { importRowId: 31, status: "write_failed", transaction: { entryType: "expense" }, cardBenefitStatus: "rule_matched", cardBenefitCandidate: { ruleId: "rule-1" } },
+    ],
+    executeCreates: async () => ({
+      created: 0,
+      failed: 1,
+      results: [{ rowId: 30, operationKey: "expense-30", status: "failed", syncStatus: "skipped" }],
+    }),
+    executeBenefit: async ({ importRowId }) => {
+      benefits.push(importRowId);
+      return { ok: true, status: "created" };
+    },
+  });
+
+  assert.deepEqual(benefits, []);
+  assert.equal(result.failedCount, 1);
+});
+
 test("refund, cashback, and support coupon rows remain review-only even if misclassified", async () => {
   let creates = 0;
   const result = await executeSafeImportAutomation({

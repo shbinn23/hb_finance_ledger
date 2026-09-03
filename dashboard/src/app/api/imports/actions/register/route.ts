@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
   }
   const result = await executeRuntimeApprovedImportCreates(parsed.value.importRowIds, {
     allowReviewedIncome: parsed.value.reviewConfirmed,
+    allowFailedRetry: true,
   });
   return NextResponse.json(result, { status: result.failed > 0 ? 207 : 200 });
 }

@@ -110,6 +110,22 @@ test("createDashboardLedgerEntry rejects invalid expense amounts", async () => {
   assert.equal(result.fieldErrors.amount, "금액은 0보다 큰 정수여야 합니다.");
 });
 
+test("createDashboardLedgerEntry reports a safe Whooing write permission failure", async () => {
+  const result = await createDashboardLedgerEntry({
+    request: validExpense(),
+    sectionId: "s1",
+    dependencies: dependencies({
+      createEntry: async () => {
+        throw Object.assign(new Error("Whooing entry creation request failed"), { status: 401 });
+      },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "whooing_failed");
+  assert.match(result.message, /쓰기 권한/);
+});
+
 test("createDashboardLedgerEntry rejects a category that is not an expense account", async () => {
   const result = await createDashboardLedgerEntry({
     request: validExpense({ categoryAccountId: "x99" }),

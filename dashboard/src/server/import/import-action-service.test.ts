@@ -113,6 +113,28 @@ test("successful prior operation is reused without another Whooing create", asyn
   assert.equal(fixture.created.length, 0);
 });
 
+test("failed create is retried only after an explicit retry approval", async () => {
+  const fixture = dependencies([row({ status: "write_failed" })], {
+    operationKey: `pyeonhan:${"a".repeat(64)}`,
+    status: "failed",
+    whooingEntryId: null,
+    errorMessage: "temporary Whooing failure",
+  });
+
+  const automaticResult = await executeApprovedImportCreates({ rowIds: [1], dependencies: fixture.dependencies });
+  assert.equal(automaticResult.skipped, 1);
+  assert.equal(fixture.created.length, 0);
+
+  const result = await executeApprovedImportCreates({
+    rowIds: [1],
+    allowFailedRetry: true,
+    dependencies: fixture.dependencies,
+  });
+
+  assert.equal(result.created, 1);
+  assert.equal(fixture.created.length, 1);
+});
+
 test("review-only and dangerous statuses are never created", async () => {
   const fixture = dependencies([
     row({ id: 1, status: "possible_delete" }),

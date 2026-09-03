@@ -33,7 +33,7 @@ const dependencies = {
 
 export function executeRuntimeApprovedImportCreates(
   rowIds: number[],
-  options: { allowReviewedIncome?: boolean } = {},
+  options: { allowReviewedIncome?: boolean; allowFailedRetry?: boolean } = {},
 ) {
   return executeApprovedImportCreates({ rowIds, ...options, dependencies });
 }
@@ -47,7 +47,7 @@ export function executeRuntimeImportBenefitSelection(input: {
     getRow: async (rowId) => (await getImportActionRows([rowId]))[0] ?? null,
     getRules: getActiveCardBenefitRules,
     saveSelection: saveImportBenefitRuleSelection,
-    executeCreates: executeRuntimeApprovedImportCreates,
+    executeCreates: (rowIds) => executeRuntimeApprovedImportCreates(rowIds, { allowFailedRetry: true }),
     executeBenefit: executeRuntimePyeonhanBenefitCandidate,
   });
 }

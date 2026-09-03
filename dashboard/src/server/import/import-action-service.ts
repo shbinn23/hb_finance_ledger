@@ -123,6 +123,7 @@ function requestForRow(row: ImportActionRow): DashboardLedgerEntryRequest | null
 export async function executeApprovedImportCreates(input: {
   rowIds: number[];
   allowReviewedIncome?: boolean;
+  allowFailedRetry?: boolean;
   dependencies: ImportActionDependencies;
 }) {
   const rows = await input.dependencies.getRows(input.rowIds);
@@ -146,7 +147,12 @@ export async function executeApprovedImportCreates(input: {
       && row.matchedWhooingEntryId === null
       && /(환급|캐시백)/.test(reviewCategory)
     );
-    const request = row && (row.status === "auto_creatable" || reviewIncomeApproved)
+    const failedCreateRetry = Boolean(
+      input.allowFailedRetry
+      && row?.status === "write_failed"
+      && row.matchedWhooingEntryId === null
+    );
+    const request = row && (row.status === "auto_creatable" || reviewIncomeApproved || failedCreateRetry)
       ? requestForRow(row)
       : null;
     if (!row || !request) {

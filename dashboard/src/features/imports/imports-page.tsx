@@ -242,7 +242,7 @@ function rowMatchesFilter(row: DryRunRow, filter: ImportViewFilter) {
   if (filter === "mapping") return row.status === "mapping_required";
   if (filter === "benefit") return row.cardBenefitStatus !== "not_applicable";
   if (filter === "duplicate") return row.status === "duplicate";
-  return ["possible_update", "possible_delete", "review_required", "reviewed", "skipped", "conflict", "mapping_required"].includes(row.status);
+  return ["possible_update", "possible_delete", "review_required", "reviewed", "skipped", "conflict", "mapping_required", "write_failed"].includes(row.status);
 }
 
 function isReviewedIncomeCreate(row: DryRunRow) {
@@ -254,7 +254,8 @@ function isReviewedIncomeCreate(row: DryRunRow) {
 }
 
 function canSelectForCreate(row: DryRunRow) {
-  return Boolean(row.importRowId && (row.status === "auto_creatable" || isReviewedIncomeCreate(row)));
+  const failedCreateRetry = row.status === "write_failed" && row.matchedWhooingEntryId === null;
+  return Boolean(row.importRowId && (row.status === "auto_creatable" || isReviewedIncomeCreate(row) || failedCreateRetry));
 }
 
 function hasReviewRows(result: DryRunResult) {
@@ -1036,7 +1037,7 @@ export function ImportsPage() {
                   return <tr key={`${row.transaction.sourceRowIndexes.join("-")}-${row.status}-${index}`}>
                     <td>{canSelectForCreate(row) ? <input
                       type="checkbox"
-                      aria-label={`${row.transaction.item} ${isReviewedIncomeCreate(row) ? "검토 후" : "신규"} 등록 선택`}
+                      aria-label={`${row.transaction.item} ${row.status === "write_failed" ? "등록 재시도" : isReviewedIncomeCreate(row) ? "검토 후" : "신규 등록"} 선택`}
                       checked={selectedRowIds.includes(row.importRowId as number)}
                       onChange={(event) => setSelectedRowIds((current) => event.target.checked
                         ? [...new Set([...current, row.importRowId as number])]
@@ -1081,6 +1082,8 @@ export function ImportsPage() {
                           ? <span className="metric-detail">{row.importRowId ? "선택 후 등록" : "검토 batch 저장 필요"}</span>
                           : isReviewedIncomeCreate(row)
                             ? <span className="metric-detail">검토 후 등록</span>
+                          : row.status === "write_failed" && row.matchedWhooingEntryId === null
+                            ? <span className="metric-detail">등록 재시도</span>
                           : ["conflict", "review_required", "mapping_required"].includes(row.status)
                             ? <div className="import-actions">
                               <Button size="sm" variant="secondary" disabled={!row.importRowId || busyActionRowId === row.importRowId || !actionExecutionSupported} onClick={() => markReviewed(row, "review")}>검토 완료</Button>

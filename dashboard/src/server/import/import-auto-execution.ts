@@ -71,7 +71,10 @@ export async function executeSafeImportAutomation(input: {
     row.status === "auto_creatable" && row.importRowId && !isReviewOnlyTransaction(row)
   ));
   const benefitRows = input.rows.filter((row) => (
-    row.cardBenefitStatus === "rule_matched" && row.cardBenefitCandidate && row.importRowId
+    row.cardBenefitStatus === "rule_matched"
+    && row.cardBenefitCandidate
+    && row.importRowId
+    && ["auto_creatable", "duplicate", "created", "updated"].includes(row.status)
   ));
   summary.safeEligibleCount = createRows.length + benefitRows.length;
   if (createRows.length > 0) {
@@ -90,6 +93,9 @@ export async function executeSafeImportAutomation(input: {
     summary.operationIds.push(...createResult.results.flatMap((row) => row.operationKey ? [row.operationKey] : []));
   }
   for (const row of benefitRows) {
+    if (row.status === "auto_creatable" && !summary.completedCreateRowIds.includes(row.importRowId as number)) {
+      continue;
+    }
     const result = await input.executeBenefit({
       importRowId: row.importRowId as number,
       ruleId: row.cardBenefitCandidate?.ruleId ?? "",

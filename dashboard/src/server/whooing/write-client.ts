@@ -169,7 +169,7 @@ export async function createWhooingEntry(payload: WhooingEntryPayload): Promise<
 
   const data = await response.json() as WhooingApiResponse;
   if (data.code !== undefined && data.code !== 200) {
-    throw new WhooingWriteClientError(safeApiError(data, "creation"));
+    throw new WhooingWriteClientError(safeApiError(data, "creation"), data.code);
   }
 
   return data;

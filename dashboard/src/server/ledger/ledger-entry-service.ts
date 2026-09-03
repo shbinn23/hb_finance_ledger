@@ -111,6 +111,37 @@ function invalidResult(
   return { ok: false, reason, message, fieldErrors };
 }
 
+function whooingFailureMessage(error: unknown, entryLabel: string) {
+  const status = error && typeof error === "object" && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : undefined;
+  const detail = status === 400
+    ? "후잉 요청값을 확인해야 합니다."
+    : status === 401
+      ? "후잉 쓰기 권한이 없습니다."
+      : status === 402
+        ? "후잉의 일일 API 요청 한도가 소진되었습니다. 다음날 다시 시도해 주세요."
+        : status === 405
+          ? "후잉 인증 토큰이 만료되었거나 유효하지 않습니다."
+          : status === 429
+            ? "후잉 요청이 일시적으로 제한되었습니다. 잠시 후 재시도해 주세요."
+            : "후잉 API 요청에 실패했습니다.";
+  return `후잉 ${entryLabel} 등록 실패: ${detail}`;
+}
+
+function whooingFailureLogContext(request: DashboardLedgerEntryRequest, error: unknown) {
+  const status = error && typeof error === "object" && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : undefined;
+  return {
+    entryType: request.type,
+    occurredDate: request.occurredDate,
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorMessage: error instanceof Error ? error.message : String(error),
+    errorStatus: Number.isFinite(status) ? status : undefined,
+  };
+}
+
 function validateCommonRequest(request: DashboardLedgerEntryRequest) {
   const fieldErrors: Record<string, string> = {};
   if (!/^\d{4}-\d{2}-\d{2}$/.test(request.occurredDate)) {
@@ -560,11 +591,13 @@ export async function createDashboardLedgerEntry({
   try {
     const response = await dependencies.createEntry(payload);
     entryId = extractWhooingEntryId(response);
-  } catch {
+  } catch (error) {
+    const failureMessage = whooingFailureMessage(error, successLabel);
+    console.warn("[ledger-entry] Whooing entry creation failed", whooingFailureLogContext(request, error));
     if (operationReserved && operationStore && request.operationKey) {
-      await operationStore.markFailed(request.operationKey, `Whooing ${successLabel} creation failed`).catch(() => undefined);
+      await operationStore.markFailed(request.operationKey, failureMessage).catch(() => undefined);
     }
-    return invalidResult("whooing_failed", `후잉 ${successLabel} 등록에 실패했습니다.`);
+    return invalidResult("whooing_failed", failureMessage);
   }
 
   if (operationReserved && operationStore && request.operationKey) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWhooingAccount, deleteWhooingEntry, extractWhooingAccountId, getWhooingEntry, updateWhooingEntry } from "./write-client.ts";
+import { createWhooingAccount, createWhooingEntry, deleteWhooingEntry, extractWhooingAccountId, getWhooingEntry, updateWhooingEntry } from "./write-client.ts";
 
 const payload = {
   section_id: "s1",
@@ -13,6 +13,27 @@ const payload = {
   money: 9000,
   memo: "",
 };
+
+test("Whooing create preserves an API error code for safe caller diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = ["WHOOING_APP_ID", "WHOOING_TOKEN", "WHOOING_SIGNATURE"]
+    .map((key) => [key, process.env[key]] as const);
+  process.env.WHOOING_APP_ID = "test-app";
+  process.env.WHOOING_TOKEN = "test-token";
+  process.env.WHOOING_SIGNATURE = "test-signature";
+  globalThis.fetch = async () => new Response(JSON.stringify({ code: 401, message: "denied" }), { status: 200 });
+  try {
+    await assert.rejects(
+      () => createWhooingEntry(payload),
+      (error: unknown) => error instanceof Error && "status" in error && error.status === 401,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of originalEnv) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
 
 test("Whooing update uses authenticated PUT for one positive entry id", async () => {
   const originalFetch = globalThis.fetch;
