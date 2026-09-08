@@ -33,7 +33,7 @@ function compact(value: string | null | undefined) {
 }
 
 function exactRateDiscount(transaction: NormalizedPyeonhanTransaction, basisPoints: number) {
-  return Math.floor(transaction.approvalAmount * basisPoints / 10_000) === transaction.discountAmount;
+  return Math.round(transaction.approvalAmount * basisPoints / 10_000) === transaction.discountAmount;
 }
 
 function candidateFromRule(
@@ -137,9 +137,9 @@ export function identifyPyeonhanCardBenefitCandidate(
     }
     if (subcategory === "병원·약국" || subcategory === "병원/약국") {
       return {
-        ruleId: "shinhan_lady_medical_5p",
-        label: "신한 레이디 · 병원/약국 5%",
-        reason: "카드·병원/약국 분류·정확한 5% 할인액이 일치합니다.",
+        ruleId: "shinhan_lady_lunch_5p",
+        label: "신한 레이디 · 점심 5%",
+        reason: "신한 레이디 5% 할인은 점심 rule로 통합 관리합니다.",
         discountRateBps: 500,
         performanceAmount: transaction.approvalAmount,
         confidence: 1,

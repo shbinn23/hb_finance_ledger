@@ -65,6 +65,34 @@ test("resolves the 25,250 to 22,725 MG+S discount from card and amounts", () => 
   assert.deepEqual(result.candidates.map((candidate) => candidate.ruleId), ["hana_mgs_simple_pay_10p"]);
 });
 
+test("accepts a one-won rounded MG+S discount from the imported statement", () => {
+  const result = resolvePyeonhanCardBenefitCandidates(
+    transaction({
+      sourceCategoryName: "필수",
+      sourceSubcategoryName: "식비",
+      item: "쇼핑",
+      memo: "닭가슴살 20팩",
+      postingAmount: 21939,
+      approvalAmount: 24377,
+      discountAmount: 2438,
+    }),
+    { accountType: "liabilities", accountId: "x45" },
+    [
+      rule({}),
+      rule({
+        ruleId: "hana_mgs_subscription_50p",
+        name: "하나 MG+S 구독 50%",
+        discountRateBps: 5000,
+        minApprovalAmount: null,
+      }),
+    ],
+  );
+
+  assert.equal(result.status, "rule_matched");
+  assert.equal(result.selectedRuleId, "hana_mgs_simple_pay_10p");
+  assert.deepEqual(result.candidates.map((candidate) => candidate.ruleId), ["hana_mgs_simple_pay_10p"]);
+});
+
 test("uses amount difference for discount detection without category evidence", () => {
   const result = resolvePyeonhanCardBenefitCandidates(
     transaction({
@@ -160,6 +188,26 @@ test("identifies exact MG+S subscription and Shinhan Lady lunch candidates", () 
     reason: "카드·식비 분류·정확한 5% 할인액이 일치합니다.",
     discountRateBps: 500,
     performanceAmount: 7700,
+    confidence: 1,
+  });
+});
+
+test("consolidates Shinhan Lady medical-category 5% discounts into the lunch rule", () => {
+  assert.deepEqual(identifyPyeonhanCardBenefitCandidate(transaction({
+    sourceAssetName: "신한 레이디",
+    sourceCategoryName: "준필수",
+    sourceSubcategoryName: "병원·약국",
+    item: "병원",
+    memo: "",
+    postingAmount: 9500,
+    approvalAmount: 10000,
+    discountAmount: 500,
+  })), {
+    ruleId: "shinhan_lady_lunch_5p",
+    label: "신한 레이디 · 점심 5%",
+    reason: "신한 레이디 5% 할인은 점심 rule로 통합 관리합니다.",
+    discountRateBps: 500,
+    performanceAmount: 10000,
     confidence: 1,
   });
 });

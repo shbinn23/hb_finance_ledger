@@ -39,7 +39,6 @@ function ruleContextMatches(transaction: NormalizedPyeonhanTransaction, rule: Ca
     .toLocaleLowerCase("ko-KR");
   if (rule.ruleId.includes("subscription")) return /(구독|멤버십|와우)/.test(evidence);
   if (rule.ruleId === "shinhan_lady_lunch_5p") return /(점심|아워홈)/.test(evidence);
-  if (rule.ruleId === "shinhan_lady_medical_5p") return /(병원|약국)/.test(evidence);
   if (rule.ruleId === "shinhan_lady_shopping_3p") return /(쇼핑|백화점|마트)/.test(evidence);
   if (rule.paymentChannel === "simple_pay") {
     return /(kcp|kicc|toss|카카오페이|네이버페이|나이스|nice)/.test(evidence);

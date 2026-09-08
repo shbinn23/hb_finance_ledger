@@ -57,7 +57,6 @@ const DISCOUNT_RULES = [
   { id: "hana_mgs_simple_pay_10p", label: "하나 MG+S · 간편결제 10%", type: "card_benefit" },
   { id: "hana_mgs_subscription_50p", label: "하나 MG+S · 구독 50%", type: "card_benefit" },
   { id: "shinhan_lady_lunch_5p", label: "신한 레이디 · 점심 5%", type: "card_benefit" },
-  { id: "shinhan_lady_medical_5p", label: "신한 레이디 · 병원/약국 5%", type: "card_benefit" },
   { id: "shinhan_lady_shopping_3p", label: "신한 레이디 · 쇼핑 3%", type: "card_benefit" },
 ] as const;
 

@@ -29,21 +29,6 @@ insert into app.card_benefit_rules (
     'reduce_expense'
   ),
   (
-    'shinhan_lady_medical_5p',
-    'liabilities',
-    'x50',
-    '신한 레이디 병원/약국 5%',
-    'active',
-    21,
-    null,
-    null,
-    'rate',
-    500,
-    '[]'::jsonb,
-    '{"performanceAmountPolicy": "approval_amount", "manualSelection": true}'::jsonb,
-    'reduce_expense'
-  ),
-  (
     'shinhan_lady_shopping_3p',
     'liabilities',
     'x50',

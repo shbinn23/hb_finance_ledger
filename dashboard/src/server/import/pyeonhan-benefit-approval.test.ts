@@ -78,6 +78,63 @@ test("benefit approval creates only a correctly separated event from server-side
   assert.deepEqual(deps.statuses, ["approved", "created"]);
 });
 
+test("benefit approval preserves a one-won rounded discount observed in the imported statement", async () => {
+  const record = candidate({
+    candidateRuleId: "hana_mgs_simple_pay_10p",
+    approvalAmount: 24377,
+    postingAmount: 21939,
+    discountAmount: 2438,
+    mappedCardAccountId: "x45",
+    mirrorEntry: {
+      ...candidate().mirrorEntry!,
+      rightAccountId: "x45",
+      item: "쇼핑",
+      memo: "닭가슴살 20팩",
+      amount: 21939,
+    },
+    item: "쇼핑",
+    memo: "닭가슴살 20팩",
+    rule: {
+      ...candidate().rule,
+      ruleId: "hana_mgs_simple_pay_10p",
+      cardAccountId: "x45",
+      discountRateBps: 1000,
+    },
+  });
+  const deps = dependencies(record);
+  let inserted: {
+    approvalAmount: number;
+    performanceAmount: number;
+    eligibleDiscountAmount: number;
+    appliedDiscountAmount: number;
+    postingAmount: number;
+  } | null = null;
+  deps.createEvent = async (event) => {
+    inserted = event;
+    return "event-rounded";
+  };
+
+  const result = await approvePyeonhanBenefitCandidate(
+    { importRowId: 11, ruleId: "hana_mgs_simple_pay_10p" },
+    deps,
+  );
+
+  assert.equal(result.status, "created");
+  assert.deepEqual(inserted && {
+    approvalAmount: inserted.approvalAmount,
+    performanceAmount: inserted.performanceAmount,
+    eligibleDiscountAmount: inserted.eligibleDiscountAmount,
+    appliedDiscountAmount: inserted.appliedDiscountAmount,
+    postingAmount: inserted.postingAmount,
+  }, {
+    approvalAmount: 24377,
+    performanceAmount: 24377,
+    eligibleDiscountAmount: 2438,
+    appliedDiscountAmount: 2438,
+    postingAmount: 21939,
+  });
+});
+
 test("benefit approval rejects missing mirror evidence and card-rule mismatches", async () => {
   const missing = dependencies(candidate({ mirrorEntry: null }));
   const mismatch = dependencies(candidate({ rule: { ...candidate().rule, cardAccountId: "x45" } }));

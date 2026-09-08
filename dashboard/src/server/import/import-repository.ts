@@ -303,6 +303,13 @@ export async function getPreviousImportRowsForRange(
     where r.occurred_date between $1::date and $2::date
       and r.status in ('created', 'updated', 'duplicate')
       and coalesce(r.created_whooing_entry_id, r.matched_whooing_entry_id) is not null
+      and not exists (
+        select 1
+        from app.import_write_operations deleted
+        where deleted.operation_type = 'delete'
+          and deleted.status = 'created'
+          and deleted.whooing_entry_id = coalesce(r.created_whooing_entry_id, r.matched_whooing_entry_id)
+      )
     order by coalesce(r.created_whooing_entry_id, r.matched_whooing_entry_id),
              b.created_at desc, r.created_at desc, r.id desc
     `,

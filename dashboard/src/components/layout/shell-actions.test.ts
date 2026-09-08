@@ -31,6 +31,8 @@ test("dashboard expense entry dialog exposes the expense form and pending entry 
     assert.match(dialogSource, new RegExp(label));
   }
   assert.doesNotMatch(dialogSource, /ledger-entry-tab" disabled/);
+  assert.doesNotMatch(dialogSource, /shinhan_lady_medical_5p/);
+  assert.doesNotMatch(dialogSource, /신한 레이디 · 병원\/약국 5%/);
 });
 
 test("dashboard expense entry dialog is portaled outside the filtered topbar", () => {

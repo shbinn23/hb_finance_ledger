@@ -86,3 +86,10 @@ test("previous snapshot keeps only the latest interpretation of each Whooing ent
     /order by coalesce\(r\.created_whooing_entry_id, r\.matched_whooing_entry_id\),[\s\S]*b\.created_at desc/,
   );
 });
+
+test("previous snapshot excludes entries completed by an approved delete", () => {
+  assert.match(
+    source,
+    /not exists \([\s\S]*from app\.import_write_operations deleted[\s\S]*deleted\.operation_type = 'delete'[\s\S]*deleted\.status = 'created'[\s\S]*deleted\.whooing_entry_id = coalesce\(r\.created_whooing_entry_id, r\.matched_whooing_entry_id\)/,
+  );
+});

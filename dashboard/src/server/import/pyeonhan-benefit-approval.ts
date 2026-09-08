@@ -170,7 +170,7 @@ export async function approvePyeonhanBenefitCandidate(
   ) {
     return rejected("선택한 카드혜택 rule이 거래 카드와 일치하지 않습니다.");
   }
-  const eligibleDiscountAmount = Math.floor(candidate.approvalAmount * rule.discountRateBps / 10_000);
+  const eligibleDiscountAmount = Math.round(candidate.approvalAmount * rule.discountRateBps / 10_000);
   const exactDiscount = eligibleDiscountAmount === candidate.discountAmount;
   const capLimitedDiscount = Boolean(rule.hasMonthlyCap)
     && candidate.discountAmount > 0

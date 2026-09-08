@@ -32,6 +32,10 @@ const importBenefitSelection = readFileSync(
   resolve(migrationRoot, "011_expand_import_benefit_selection.sql"),
   "utf8",
 );
+const consolidateShinhanLadyRules = readFileSync(
+  resolve(migrationRoot, "012_consolidate_shinhan_lady_5p_rule.sql"),
+  "utf8",
+);
 const importRepository = readFileSync(
   resolve(import.meta.dirname, "import-repository.ts"),
   "utf8",
@@ -137,4 +141,12 @@ test("benefit selection migration preserves legacy states and adds explicit revi
   assert.match(importBenefitSelection, /'rule_unknown'/);
   assert.doesNotMatch(importBenefitSelection, /drop table/i);
   assert.match(importBenefitSelection, /commit;\s*$/i);
+});
+
+test("Shinhan Lady rule consolidation removes only the unused medical rule", () => {
+  assert.match(consolidateShinhanLadyRules, /^begin;/i);
+  assert.match(consolidateShinhanLadyRules, /rule_id = 'shinhan_lady_medical_5p'/);
+  assert.match(consolidateShinhanLadyRules, /delete from app\.card_benefit_rules/);
+  assert.doesNotMatch(consolidateShinhanLadyRules, /shinhan_lady_lunch_5p/);
+  assert.match(consolidateShinhanLadyRules, /commit;\s*$/i);
 });
