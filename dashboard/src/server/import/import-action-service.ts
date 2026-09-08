@@ -106,6 +106,21 @@ function requestForRow(row: ImportActionRow): DashboardLedgerEntryRequest | null
   if (
     row.entryType === "transfer"
     && row.sourceAccountType === "assets"
+    && row.counterpartyAccountType === "liabilities"
+    && /(카드정산|카드대금)/.test(row.item)
+    && row.sourceAccountId
+    && row.counterpartyAccountId
+  ) {
+    return {
+      ...common,
+      type: "card_payment",
+      cardAccountId: row.counterpartyAccountId,
+      assetAccountId: row.sourceAccountId,
+    };
+  }
+  if (
+    row.entryType === "transfer"
+    && row.sourceAccountType === "assets"
     && row.counterpartyAccountType === "assets"
     && row.sourceAccountId
     && row.counterpartyAccountId

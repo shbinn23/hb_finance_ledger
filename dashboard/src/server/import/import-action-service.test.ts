@@ -101,6 +101,35 @@ test("approved expense, income, and transfer use persisted row mappings", async 
   ]);
 });
 
+test("approved card settlement uses the card payment ledger direction", async () => {
+  const fixture = dependencies([
+    row({
+      entryType: "transfer",
+      item: "카드정산 결제",
+      sourceAccountType: "assets",
+      sourceAccountId: "x-bank",
+      categoryAccountId: null,
+      counterpartyAccountType: "liabilities",
+      counterpartyAccountId: "x-card",
+    }),
+  ]);
+
+  const result = await executeApprovedImportCreates({ rowIds: [1], dependencies: fixture.dependencies });
+
+  assert.equal(result.created, 1);
+  assert.deepEqual(fixture.created, [{
+    type: "card_payment",
+    occurredDate: "2026-08-15",
+    item: "카드정산 결제",
+    amount: 9000,
+    memo: "",
+    operationKey: `pyeonhan:${"a".repeat(64)}`,
+    source: "pyeonhan_excel",
+    cardAccountId: "x-card",
+    assetAccountId: "x-bank",
+  }]);
+});
+
 test("successful prior operation is reused without another Whooing create", async () => {
   const fixture = dependencies([row()], {
     operationKey: `pyeonhan:${"a".repeat(64)}`,
