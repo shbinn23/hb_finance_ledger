@@ -1139,11 +1139,11 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
            r.occurred_date::text, r.entry_type, r.source_category_name, r.source_subcategory_name,
            r.item, r.memo, r.posting_amount::text,
            r.approval_amount::text, r.discount_amount::text, r.benefit_rule_id,
-           source_mapping.whooing_account_type as source_account_type,
-           source_mapping.whooing_account_id as source_account_id,
+           coalesce(source_mapping.whooing_account_type, source_exact.account_type) as source_account_type,
+           coalesce(source_mapping.whooing_account_id, source_exact.account_id) as source_account_id,
            category_mapping.whooing_account_id as category_account_id,
-           counterparty_mapping.whooing_account_type as counterparty_account_type,
-           counterparty_mapping.whooing_account_id as counterparty_account_id,
+           coalesce(counterparty_mapping.whooing_account_type, counterparty_exact.account_type) as counterparty_account_type,
+           coalesce(counterparty_mapping.whooing_account_id, counterparty_exact.account_id) as counterparty_account_id,
            r.matched_whooing_entry_id::text,
            r.review_mirror_section_id as mirror_section_id,
            r.review_mirror_entry_id::text as mirror_entry_id,
@@ -1161,6 +1161,16 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
      and source_mapping.mapping_type = 'asset'
      and source_mapping.source_key = r.source_asset_name
      and source_mapping.is_active
+    left join lateral (
+      select min(a.account_type) as account_type, min(a.account_id) as account_id
+      from whooing.accounts a
+      where a.section_id = $2
+        and a.item_type = 'account'
+        and a.account_type in ('assets', 'liabilities')
+        and lower(regexp_replace(a.title, '\\s+', '', 'g'))
+          = lower(regexp_replace(r.source_asset_name, '\\s+', '', 'g'))
+      having count(*) = 1
+    ) source_exact on source_mapping.whooing_account_id is null
     left join app.import_mappings category_mapping
       on category_mapping.source = 'pyeonhan_excel'
      and category_mapping.mapping_type = case when r.entry_type = 'income' then 'income_category' else 'expense_category' end
@@ -1171,10 +1181,20 @@ export async function getImportActionRows(rowIds: number[]): Promise<ImportActio
      and counterparty_mapping.mapping_type = 'asset'
      and counterparty_mapping.source_key = r.counterparty_asset_name
      and counterparty_mapping.is_active
+    left join lateral (
+      select min(a.account_type) as account_type, min(a.account_id) as account_id
+      from whooing.accounts a
+      where a.section_id = $2
+        and a.item_type = 'account'
+        and a.account_type in ('assets', 'liabilities')
+        and lower(regexp_replace(a.title, '\\s+', '', 'g'))
+          = lower(regexp_replace(r.counterparty_asset_name, '\\s+', '', 'g'))
+      having count(*) = 1
+    ) counterparty_exact on counterparty_mapping.whooing_account_id is null
     where r.id = any($1::bigint[])
     order by r.id
     `,
-    [rowIds],
+    [rowIds, sectionId],
   );
   return result.rows.map((row) => ({
     id: Number(row.id),

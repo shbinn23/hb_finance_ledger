@@ -15,6 +15,13 @@ test("action repository loads financial evidence and mappings on the server", ()
   assert.match(source, /left join app\.import_mappings category_mapping/);
 });
 
+test("action repository falls back to an exact normalized account title", () => {
+  assert.match(source, /coalesce\(source_mapping\.whooing_account_type, source_exact\.account_type\) as source_account_type/);
+  assert.match(source, /coalesce\(source_mapping\.whooing_account_id, source_exact\.account_id\) as source_account_id/);
+  assert.match(source, /left join lateral \([\s\S]*regexp_replace\(a\.title, '\\\\s\+', '', 'g'\)[\s\S]*regexp_replace\(r\.source_asset_name, '\\\\s\+', '', 'g'\)/);
+  assert.match(source, /coalesce\(counterparty_mapping\.whooing_account_id, counterparty_exact\.account_id\) as counterparty_account_id/);
+});
+
 test("action repository reserves and finishes operations idempotently", () => {
   assert.match(source, /export async function getImportActionOperation/);
   assert.match(source, /export async function reserveImportActionOperation/);
