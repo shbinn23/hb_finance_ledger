@@ -745,7 +745,7 @@ test("reconciliation detects a payment-account-only revision as one update", () 
   assert.equal(result.possibleDeletes.length, 0);
 });
 
-test("reconciliation keeps an unresolved discount ledger-creatable but difference income in review", () => {
+test("reconciliation keeps an unresolved discount ledger-creatable but balance differences in review", () => {
   const result = reconcilePyeonhanTransactions({
     transactions: [
       transaction({ approvalAmount: 10000, postingAmount: 9000, discountAmount: 1000 }),
@@ -753,6 +753,16 @@ test("reconciliation keeps an unresolved discount ledger-creatable but differenc
         entryType: "difference_income",
         sourceIdentityKey: "difference-1",
         sourceContentHash: "difference-content",
+      }),
+      transaction({
+        entryType: "difference_expense",
+        sourceAssetName: "신한 참신한파킹",
+        sourceCategoryName: "잔액수정",
+        item: "차액",
+        postingAmount: 64,
+        approvalAmount: 64,
+        sourceIdentityKey: "difference-expense-1",
+        sourceContentHash: "difference-expense-content",
       }),
     ],
     mappings,
@@ -765,6 +775,8 @@ test("reconciliation keeps an unresolved discount ledger-creatable but differenc
   assert.equal(result.rows[0].cardBenefitCandidate, null);
   assert.equal(result.rows[1].status, "review_required");
   assert.match(result.rows[1].reason, /지원금\/쿠폰 처리 정책 필요/);
+  assert.equal(result.rows[2].status, "review_required");
+  assert.match(result.rows[2].reason, /차액지출.*balance adjustment/);
 });
 
 test("reconciliation exposes an exact card rule candidate without blocking ledger creation", () => {

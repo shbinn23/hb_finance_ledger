@@ -60,18 +60,20 @@ test("parsePyeonhanRows parses Excel serial dates and duplicate asset headers by
   assert.equal(result.transactions[0].discountAmount, 400);
 });
 
-test("parsePyeonhanRows supports expense, income, and difference-income rows", () => {
+test("parsePyeonhanRows supports expense, income, and balance-difference rows", () => {
   const result = parsePyeonhanRows([
     header,
     [46264, "국민은행", "필수", "식비", "점심", 9000, "지출", "회사", 9000, "KRW", 9000],
     [46264, "국민은행", "근로소득", null, "급여", 3000000, "수입", null, 3000000, "KRW", 3000000],
     [46264, "현금", "잔고조정", null, "차액", 1000, "차액수입", null, 1000, "KRW", 1000],
+    [46264, "신한 참신한파킹", "잔액수정", null, "차액", 64, "차액지출", null, 64, "KRW", 64],
   ]);
 
   assert.deepEqual(result.transactions.map((row) => row.entryType), [
     "expense",
     "income",
     "difference_income",
+    "difference_expense",
   ]);
   assert.equal(result.transactions[0].memo, "회사");
 });

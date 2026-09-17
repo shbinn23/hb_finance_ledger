@@ -112,6 +112,7 @@ function typeFromSource(value: string): PyeonhanEntryType {
   if (value === "지출") return "expense";
   if (value === "수입") return "income";
   if (value === "차액수입") return "difference_income";
+  if (value === "차액지출") return "difference_expense";
   if (value === "이체입금" || value === "이체출금") return "transfer";
   throw new PyeonhanExcelFormatError(`지원하지 않는 수입/지출 값입니다: ${value || "(빈 값)"}`);
 }

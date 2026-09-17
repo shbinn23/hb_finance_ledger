@@ -18,6 +18,7 @@ function isReviewOnlyTransaction(row: AutomationRow) {
     row.transaction.sourceSubcategoryName,
   ].filter(Boolean).join(" ");
   return row.transaction.entryType === "difference_income"
+    || row.transaction.entryType === "difference_expense"
     || /(환급|캐시백|민생지원쿠폰)/.test(text);
 }
 

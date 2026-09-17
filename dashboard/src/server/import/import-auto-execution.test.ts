@@ -87,13 +87,14 @@ test("benefit automation waits for a successful ledger create and ignores failed
   assert.equal(result.failedCount, 1);
 });
 
-test("refund, cashback, and support coupon rows remain review-only even if misclassified", async () => {
+test("refund, cashback, and balance difference rows remain review-only even if misclassified", async () => {
   let creates = 0;
   const result = await executeSafeImportAutomation({
     enabled: true,
     rows: [
       { importRowId: 20, status: "auto_creatable", transaction: { entryType: "income", sourceCategoryName: "환급", sourceSubcategoryName: "캐시백" }, cardBenefitStatus: "not_applicable", cardBenefitCandidate: null },
       { importRowId: 21, status: "auto_creatable", transaction: { entryType: "difference_income", item: "민생지원쿠폰 차액조정" }, cardBenefitStatus: "not_applicable", cardBenefitCandidate: null },
+      { importRowId: 22, status: "auto_creatable", transaction: { entryType: "difference_expense", item: "차액" }, cardBenefitStatus: "not_applicable", cardBenefitCandidate: null },
     ],
     executeCreates: async () => { creates += 1; return { created: 0, failed: 0, results: [] }; },
     executeBenefit: async () => ({ ok: true, status: "created" }),
@@ -101,5 +102,5 @@ test("refund, cashback, and support coupon rows remain review-only even if miscl
 
   assert.equal(creates, 0);
   assert.equal(result.safeEligibleCount, 0);
-  assert.equal(result.blockedReviewOnlyCount, 2);
+  assert.equal(result.blockedReviewOnlyCount, 3);
 });

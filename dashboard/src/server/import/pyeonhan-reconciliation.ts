@@ -284,6 +284,7 @@ function mappingGap(
   mapping: ResolvedImportMapping,
 ) {
   if (transaction.entryType === "difference_income") return "차액수입은 조정 계정 매핑이 필요합니다.";
+  if (transaction.entryType === "difference_expense") return "차액지출은 조정 계정 매핑이 필요합니다.";
   if (!mapping.sourceAccount) return "자산 매핑이 필요합니다.";
   if (transaction.entryType === "transfer" && !mapping.counterpartyAccount) {
     return "이체 상대 자산 매핑이 필요합니다.";
@@ -301,6 +302,9 @@ function manualReviewReason(transaction: NormalizedPyeonhanTransaction) {
   }
   if (transaction.entryType === "difference_income" || /민생지원쿠폰/.test(transaction.item)) {
     return "민생지원쿠폰 차액조정은 balance adjustment 또는 지원금/쿠폰 처리 정책 필요 상태입니다.";
+  }
+  if (transaction.entryType === "difference_expense") {
+    return "차액지출은 balance adjustment 감소 처리 정책 필요 상태입니다.";
   }
   return null;
 }
@@ -578,7 +582,10 @@ export function reconcilePyeonhanTransactions({
       base.cardBenefitStatus = "needs_review";
     }
     const manualReason = manualReviewReason(transaction);
-    if (manualReason && transaction.entryType === "difference_income") {
+    if (manualReason && (
+      transaction.entryType === "difference_income"
+      || transaction.entryType === "difference_expense"
+    )) {
       return { ...base, status: "review_required", reason: manualReason };
     }
     const gap = mappingGap(transaction, mapping);

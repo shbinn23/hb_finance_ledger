@@ -36,6 +36,10 @@ const consolidateShinhanLadyRules = readFileSync(
   resolve(migrationRoot, "012_consolidate_shinhan_lady_5p_rule.sql"),
   "utf8",
 );
+const supportDifferenceExpense = readFileSync(
+  resolve(migrationRoot, "013_support_difference_expense_import.sql"),
+  "utf8",
+);
 const importRepository = readFileSync(
   resolve(import.meta.dirname, "import-repository.ts"),
   "utf8",
@@ -149,4 +153,13 @@ test("Shinhan Lady rule consolidation removes only the unused medical rule", () 
   assert.match(consolidateShinhanLadyRules, /delete from app\.card_benefit_rules/);
   assert.doesNotMatch(consolidateShinhanLadyRules, /shinhan_lady_lunch_5p/);
   assert.match(consolidateShinhanLadyRules, /commit;\s*$/i);
+});
+
+test("difference expense migration expands the import entry type safely", () => {
+  assert.match(supportDifferenceExpense, /^begin;/i);
+  assert.match(supportDifferenceExpense, /drop constraint if exists import_rows_entry_type_check/);
+  assert.match(supportDifferenceExpense, /'difference_income'/);
+  assert.match(supportDifferenceExpense, /'difference_expense'/);
+  assert.doesNotMatch(supportDifferenceExpense, /drop table/i);
+  assert.match(supportDifferenceExpense, /commit;\s*$/i);
 });

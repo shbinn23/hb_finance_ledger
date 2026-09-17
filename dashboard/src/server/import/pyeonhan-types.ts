@@ -1,4 +1,4 @@
-export type PyeonhanEntryType = "expense" | "income" | "transfer" | "difference_income";
+export type PyeonhanEntryType = "expense" | "income" | "transfer" | "difference_income" | "difference_expense";
 export type ImportBatchStatus = "completed" | "partial" | "review" | "failed";
 export type PersistedImportBatchStatus = ImportBatchStatus | "pending" | "applying";
 
