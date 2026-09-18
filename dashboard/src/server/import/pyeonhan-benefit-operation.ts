@@ -27,7 +27,8 @@ export async function executePyeonhanBenefitOperation(
   const operationKey = `pyeonhan-benefit:${input.importRowId}:${input.ruleId}`;
   const existing = await dependencies.getOperation(operationKey);
   if (existing?.status === "created") {
-    return { ok: true, status: "event_exists" as const, operationKey, message: "이미 처리된 카드혜택 승인입니다." };
+    const result = await dependencies.approve(input);
+    return { ...result, operationKey };
   }
   const reserved = await dependencies.reserveOperation({
     rowId: input.importRowId,

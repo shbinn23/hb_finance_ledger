@@ -18,3 +18,24 @@ test("benefit runtime marks a partially failed approval operation as failed", as
   assert.equal(result.status, "failed");
   assert.deepEqual(finished, ["failed"]);
 });
+
+test("benefit runtime reconciles the import row when the operation already succeeded", async () => {
+  let approvals = 0;
+  const result = await executePyeonhanBenefitOperation(
+    { importRowId: 12, ruleId: "hana_mgs_simple_pay_10p" },
+    {
+      getOperation: async () => ({ status: "created" }),
+      reserveOperation: async () => { throw new Error("must not reserve an existing operation"); },
+      approve: async () => {
+        approvals += 1;
+        return { ok: true, status: "event_exists", message: "existing event reconciled" };
+      },
+      finishOperation: async () => { throw new Error("must not rewrite an existing operation"); },
+    },
+  );
+
+  assert.equal(approvals, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "event_exists");
+  assert.equal(result.operationKey, "pyeonhan-benefit:12:hana_mgs_simple_pay_10p");
+});
